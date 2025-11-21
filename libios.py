@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # libios_show_v2b.py — Disparos también en el nuevo estante (Zona 1)
-# Cambios respecto a v2:
-# - Los fogonazos/disparos (manuales y AUTO_SHOTS) ahora afectan a TODAS las zonas (1..4).
-# - En ráfaga Doc y impactos añadimos chisporroteo también en Zona 1 para que “salte” arriba del todo.
-#
-# Resto igual que v2 (132 LEDs, zonas 1..4, túneles extendidos, guardia de blanco en salto, etc).
+# REFACTORIZADO: Usa layout.py unificado para 132 LEDs
 
 import os, time, math, random, json, socket, subprocess, atexit, argparse, requests
 from typing import List
 
+# Importamos toda la definición física y lógica
+from layout import * 
 # ========= CONFIG =========
 VIDEO_FILE_DEFAULT = "/home/pi/libios.mp4"
 HOST       = "http://localhost:8090"
@@ -20,66 +18,11 @@ FPS        = 30
 GAMMA      = 1.0
 AUDIO_DEVICE = "alsa/hdmi:CARD=vc4hdmi,DEV=0"
 
-# ========= LAYOUT (132 LEDs) =========
-SEGMENTS_96 = [
-    ("B_L", 6), ("B_T", 18), ("B_R", 6),
-    ("M_R", 6), ("M_T", 18), ("M_L", 6),
-    ("T_L", 9), ("T_T", 18), ("T_R", 9),
-]
-SEGMENT_REVERSED_96 = {
-    "B_L": False, "B_T": False, "B_R": True,
-    "M_R": False, "M_T": True,  "M_L": True,
-    "T_L": False, "T_T": False, "T_R": True,
-}
-
-INDEX = {}
-start = 0
-for name, length in SEGMENTS_96:
-    ids = list(range(start, start + length))
-    if SEGMENT_REVERSED_96.get(name, False):
-        ids.reverse()
-    INDEX[name] = ids
-    start += length
-
-# Nuevo estante (Zona 1) — 36 LEDs (0-based 96..131)
-Z1_R = list(range(96, 105))      # derecha (abajo→arriba)
-Z1_T = list(range(105, 123))     # centro (derecha→izquierda)
-Z1_L = list(range(123, 132))     # izquierda (arriba→abajo)
-
-N = 132
-
-ZONE1 = Z1_R + Z1_T + Z1_L
-ZONE2 = INDEX["T_L"] + INDEX["T_T"] + INDEX["T_R"]
-ZONE3 = INDEX["M_L"] + INDEX["M_T"] + INDEX["M_R"]
-ZONE4 = INDEX["B_L"] + INDEX["B_T"] + INDEX["B_R"]
-
-ZONE1_SET, ZONE2_SET, ZONE3_SET, ZONE4_SET = set(ZONE1), set(ZONE2), set(ZONE3), set(ZONE4)
-
-TOP_ZONE, MIDDLE_ZONE, BOTTOM_ZONE = ZONE2, ZONE3, ZONE4
-
-FULL_PATH = []
-for name,_ in SEGMENTS_96:
-    FULL_PATH += INDEX[name]
-FULL_PATH += Z1_R + Z1_T + Z1_L
-
 # ========= COLOR/UTILS =========
 def clamp(x): return max(0, min(255, int(x)))
 def lerp(a, b, t): return a + (b - a) * t
 def mix(c1, c2, t): return (lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t))
 def scale(c, k): return (c[0]*k, c[1]*k, c[2]*k)
-
-WHITE          = (255,255,255)
-ELECTRIC_BLUE  = (150,200,255)
-DEEP_BLUE      = (30, 90,200)
-ORANGE_INTENSE = (255, 80,  0)
-AMBER_SOFT     = (255,140, 40)
-RED_SIREN      = (255,  0, 20)
-BLUE_SIREN     = (  0, 80,255)
-GREEN_CIRCUITS = ( 60,255, 80)
-YELLOW_WARM    = (255,200, 40)
-
-MIN_WHITE_INDEX = 96
-def white_allowed(i: int) -> bool: return i >= MIN_WHITE_INDEX
 
 def apply_gamma(c):
     if GAMMA == 1.0: return c
@@ -167,6 +110,7 @@ def pulse_zone(px, zone, color_a, color_b, phase, gain=1.0):
 
 def one_frame_white_guarded():
     px = frame_fill((0,0,0))
+    # Usa la función white_allowed importada de layout.py
     for i in range(N):
         if white_allowed(i): add(px, i, scale(WHITE, 2.5))
         else:                add(px, i, scale(ELECTRIC_BLUE, 2.2))
@@ -179,6 +123,7 @@ def police_sirens_fullrun(px, t, t0, duration=3.0):
     toggle = int((t - t0) * 12.5) % 2
     colA = BLUE_SIREN if toggle==0 else RED_SIREN
     colB = RED_SIREN  if toggle==0 else BLUE_SIREN
+    # FULL_PATH viene de layout.py
     sweep_path(px, FULL_PATH, colA, width=7, pos=phase, gain=1.8)
     sweep_path(px, list(reversed(FULL_PATH)), colB, width=7, pos=phase, gain=1.8)
     pulse_zone(px, TOP_ZONE, BLUE_SIREN, RED_SIREN, phase=t*1.1, gain=0.15)
@@ -344,9 +289,12 @@ def run_show(video_path):
     accel_phase = 0.0
     accel_speed = 0.0
 
-    SIDE_PATH  = INDEX["B_L"] + INDEX["M_L"] + INDEX["T_L"] + Z1_L
-    TOP_PATH   = TOP_ZONE + Z1_T
-    RIGHT_PATH = INDEX["B_R"] + INDEX["M_R"] + INDEX["T_R"] + Z1_R
+    # CONSTRUCCIÓN DE PATHS UNIFICADOS
+    # Usamos las claves del INDEX que definimos en layout.py
+    # INDEX["Z1_L"] son los 9 LEDs de la izquierda superior, etc.
+    SIDE_PATH  = INDEX["B_L"] + INDEX["M_L"] + INDEX["T_L"] + INDEX["Z1_L"]
+    TOP_PATH   = ZONE2 + INDEX["Z1_T"] # (ZONE2 es todo el nivel T_L+T_T+T_R) + Techo superior
+    RIGHT_PATH = INDEX["B_R"] + INDEX["M_R"] + INDEX["T_R"] + INDEX["Z1_R"]
 
     try:
         while True:
@@ -363,47 +311,47 @@ def run_show(video_path):
             if T_VAN_APPEAR <= t < (T_VAN_APPEAR+3.0):
                 police_sirens_fullrun(px, t, T_VAN_APPEAR, duration=3.0)
 
-            # 2) Inicio disparos: ahora en TODAS las zonas (1..4)
+            # 2) Inicio disparos: todas las zonas
             if t >= T_SHOTS_START and "shots_start" not in fired:
                 fired.add("shots_start")
                 muzzle_blast_white(px, [ZONE4, ZONE3, ZONE2, ZONE1], width=5, density=0.95)
 
-            # Impactos puntuales + chisporroteo también en Zona 1
+            # Impactos puntuales
             for k,imp_t in enumerate(SHOT_IMPACTS):
                 key=f"impact_{k}"
                 if t >= imp_t and key not in fired:
                     fired.add(key)
                     muzzle_blast_white(px, [ZONE4, ZONE3, ZONE2, ZONE1], width=5, density=0.95)
-                    crackle(px, (TOP_ZONE[::3] + ZONE1[::4]), spread=2, density=0.8, base=WHITE, mix_with=(0,0,0), mix_amt=0.15)
+                    crackle(px, (ZONE2[::3] + ZONE1[::4]), spread=2, density=0.8, base=WHITE, mix_with=(0,0,0), mix_amt=0.15)
 
-            # 3) Disparos adicionales AUTO_SHOTS en todas las zonas
+            # 3) Disparos adicionales
             for ds in AUTO_SHOTS:
                 key = f"audshot_{ds:.2f}"
                 if t >= ds and key not in fired:
                     fired.add(key)
                     muzzle_blast_white(px, [ZONE4, ZONE3, ZONE2, ZONE1], width=5, density=0.95)
-                    crackle(px, (TOP_ZONE[::2] + ZONE1[::3]), spread=3, density=0.85, base=WHITE, mix_with=(0,0,0), mix_amt=0.10)
+                    crackle(px, (ZONE2[::2] + ZONE1[::3]), spread=3, density=0.85, base=WHITE, mix_with=(0,0,0), mix_amt=0.10)
 
-            # 4) Doc acribillado — incluye ahora Zona 1 en el chisporroteo
+            # 4) Doc acribillado
             if DOC_BURST_START <= t <= DOC_BURST_END:
                 if int(t*24)%2==0:
                     muzzle_blast_white(px, [ZONE4, ZONE3, ZONE2, ZONE1], width=5, density=0.95)
-                crackle(px, (TOP_ZONE[::2] + ZONE1[::3]), spread=3, density=0.85, base=WHITE, mix_with=(0,0,0), mix_amt=0.10)
+                crackle(px, (ZONE2[::2] + ZONE1[::3]), spread=3, density=0.85, base=WHITE, mix_with=(0,0,0), mix_amt=0.10)
 
-            # 5) Marty + motor en Zona 3
+            # 5) Marty + motor en Zona 3 (Middle)
             if t >= MARTY_TO_DELOREAN and "marty_in" not in fired:
                 fired.add("marty_in")
                 for i in range(N): add(px, i, scale(ELECTRIC_BLUE, 0.8))
             if t >= DELOREAN_START:
                 accel_speed = max(accel_speed, 0.35)
                 if not (TIME_CIRCUITS_ON <= t < (TIME_CIRCUITS_ON + TIME_CIRCUITS_LEN)):
-                    pulse_zone(px, MIDDLE_ZONE, AMBER_SOFT, YELLOW_WARM, phase=t*0.75, gain=0.35)
+                    pulse_zone(px, ZONE3, AMBER_SOFT, YELLOW_WARM, phase=t*0.75, gain=0.35)
 
-            # 6) Time Circuits (2–4) — Zona 1 se mantiene fuera
+            # 6) Time Circuits (2–4)
             if TIME_CIRCUITS_ON <= t < (TIME_CIRCUITS_ON + TIME_CIRCUITS_LEN):
-                pulse_zone(px, TOP_ZONE,    RED_SIREN,      RED_SIREN,      phase=t*0.5,      gain=0.45)
-                pulse_zone(px, MIDDLE_ZONE, GREEN_CIRCUITS, GREEN_CIRCUITS, phase=t*0.5+0.33, gain=0.35)
-                pulse_zone(px, BOTTOM_ZONE, AMBER_SOFT,     AMBER_SOFT,     phase=t*0.5+0.66, gain=0.30)
+                pulse_zone(px, ZONE2, RED_SIREN,      RED_SIREN,      phase=t*0.5,      gain=0.45)
+                pulse_zone(px, ZONE3, GREEN_CIRCUITS, GREEN_CIRCUITS, phase=t*0.5+0.33, gain=0.35)
+                pulse_zone(px, ZONE4, AMBER_SOFT,     AMBER_SOFT,     phase=t*0.5+0.66, gain=0.30)
 
             # 7) Aceleración 1
             if ACCEL1_START <= t <= ACCEL1_END:
@@ -415,14 +363,14 @@ def run_show(video_path):
                 color_flux = mix(AMBER_SOFT, ORANGE_INTENSE, 0.5 + 0.5*math.sin(t*2.0))
 
                 parallax_tunnel_bundle(px, t, v, accel_phase, 
-                                       INDEX["B_L"] + INDEX["M_L"] + INDEX["T_L"] + Z1_L,
-                                       TOP_ZONE + Z1_T,
-                                       INDEX["B_R"] + INDEX["M_R"] + INDEX["T_R"] + Z1_R,
+                                       SIDE_PATH,
+                                       TOP_PATH,
+                                       RIGHT_PATH,
                                        color_flux)
 
-                roadside_markers(px, INDEX["B_L"] + INDEX["M_L"] + INDEX["T_L"] + Z1_L,  t, v)
-                roadside_markers(px, TOP_ZONE + Z1_T,   t, v)
-                roadside_markers(px, INDEX["B_R"] + INDEX["M_R"] + INDEX["T_R"] + Z1_R, t, v)
+                roadside_markers(px, SIDE_PATH,  t, v)
+                roadside_markers(px, TOP_PATH,   t, v)
+                roadside_markers(px, RIGHT_PATH, t, v)
 
                 warp_strobe(px, t, v*0.7)
 
@@ -439,9 +387,9 @@ def run_show(video_path):
             if MORTAR_AIM <= t < MORTAR_AIM+3.0:
                 phase = (t-MORTAR_AIM)
                 ring = 0.5 + 0.5*math.sin(phase*4.0*math.pi)
-                for i in TOP_ZONE:    add(px, i, scale(RED_SIREN, 0.7*ring))
-                for i in MIDDLE_ZONE: add(px, i, scale(RED_SIREN, 0.35*ring))
-                for i in BOTTOM_ZONE: add(px, i, scale(RED_SIREN, 0.25*ring))
+                for i in ZONE2: add(px, i, scale(RED_SIREN, 0.7*ring))
+                for i in ZONE3: add(px, i, scale(RED_SIREN, 0.35*ring))
+                for i in ZONE4: add(px, i, scale(RED_SIREN, 0.25*ring))
 
             # 9) Aceleración final
             if ACCEL2_START <= t < JUMP_88MPH:
@@ -453,14 +401,14 @@ def run_show(video_path):
                 color_flux = mix(AMBER_SOFT, ORANGE_INTENSE, 0.5 + 0.5*math.sin(t*3.0))
 
                 parallax_tunnel_bundle(px, t, v, accel_phase, 
-                                       INDEX["B_L"] + INDEX["M_L"] + INDEX["T_L"] + Z1_L,
-                                       TOP_ZONE + Z1_T,
-                                       INDEX["B_R"] + INDEX["M_R"] + INDEX["T_R"] + Z1_R,
+                                       SIDE_PATH,
+                                       TOP_PATH,
+                                       RIGHT_PATH,
                                        color_flux)
 
-                roadside_markers(px, INDEX["B_L"] + INDEX["M_L"] + INDEX["T_L"] + Z1_L,  t, v)
-                roadside_markers(px, TOP_ZONE + Z1_T,   t, v)
-                roadside_markers(px, INDEX["B_R"] + INDEX["M_R"] + INDEX["T_R"] + Z1_R, t, v)
+                roadside_markers(px, SIDE_PATH,  t, v)
+                roadside_markers(px, TOP_PATH,   t, v)
+                roadside_markers(px, RIGHT_PATH, t, v)
 
                 warp_strobe(px, t, v)
 
@@ -482,6 +430,7 @@ def run_show(video_path):
                         add(px, i, scale(ELECTRIC_BLUE, 3.2*(0.8+0.4*math.sin(6.28*p))))
                 else:
                     for i in range(N):
+                        # La función white_allowed ahora decide usando las propiedades de la zona
                         if white_allowed(i): add(px, i, scale(WHITE, 2.5))
                         else:                add(px, i, scale(ELECTRIC_BLUE, 2.2))
                 if abs(t - JUMP_88MPH) < (1.0/FPS) and "jump_white" not in fired:
@@ -505,7 +454,7 @@ def run_show(video_path):
 
 # ========= CLI =========
 def main():
-    p = argparse.ArgumentParser(description="Persecución con los libios — v2b: disparos en todas las zonas (1..4) — 132 LEDs")
+    p = argparse.ArgumentParser(description="Persecución con los libios — Refactorizado (132 LEDs)")
     p.add_argument("--video", default=VIDEO_FILE_DEFAULT, help="Ruta al .mp4 (por defecto /home/pi/libios.mp4)")
     args = p.parse_args()
     run_show(args.video)
