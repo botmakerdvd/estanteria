@@ -1,5 +1,6 @@
 # layout.py
 # Definición unificada para estructura de 132 LEDs (4 Zonas)
+# CORREGIDO tras test visual: Z1_T y Z1_L invertidos.
 
 from typing import Dict, List
 
@@ -38,10 +39,10 @@ def calculate_unified_layout():
         ("T_R", 9,  True),  # 87-95 (Inv)
 
         # --- ZONA 1 (Estante Nuevo: 96-131) ---
-        # Definidos linealmente según el código original (sin invertir)
-        ("Z1_R", 9,  False), # 96-104
-        ("Z1_T", 18, False), # 105-122
-        ("Z1_L", 9,  False), # 123-131
+        # AJUSTES TRAS DIAGNÓSTICO:
+        ("Z1_R", 9,  False), # 96-104 (Columna Derecha: Correcta)
+        ("Z1_T", 18, True),  # 105-122 (Techo: INVERTIDO para ir de Izq->Der)
+        ("Z1_L", 9,  True),  # 123-131 (Columna Izquierda: INVERTIDA para ir de Abajo->Arriba)
     ]
 
     index_map = {}
