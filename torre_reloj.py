@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # regreso_al_futuro_torre_reloj_largo_refactored.py
-# REFACTORIZADO: Usa layout.py unificado para 132 LEDs y control de RF
+# REFACTORIZADO FINAL (CORREGIDO): Timeline limpio y variables de Spark definidas.
 
 import os, time, math, random, json, socket, subprocess, atexit, argparse, requests
-from typing import List
-from rpi_rf import RFDevice
-from layout import * 
-RF_CODES = {
-    "front":        1744397,
-    "interior":     1744398,
-    "rear":         1744399,
-    "blue_front":   1744400,
-    "blue_rear":    1744401,
-    "wheels":       1744402,
-    "flux":         1744403,
-}
+from typing import List, Tuple
+
+# --- IMPORTACIONES PROPIAS ---
+from layout import * # Configuración de LEDs
+from rf_control import RFManager # Gestión de Radiofrecuencia (incluye el GAP de seguridad)
 
 # ========= CONFIG =========
 VIDEO_FILE_DEFAULT = "/home/pi/bttflargo.mp4"
@@ -27,23 +20,26 @@ FPS        = 30
 GAMMA      = 1.0
 AUDIO_DEVICE = "alsa/hdmi:CARD=vc4hdmi,DEV=0"
 
-# ========= TIMELINE BASE =========
-T_CLOCK_BASE  = 139.2   # golpe del rayo en el reloj
-T_IMPACT_BASE = 143.5   # impacto en el DeLorean
+# ========= TIMELINE BASE (Segundos) =========
+T_CLOCK_BASE  = 139.2   
+T_IMPACT_BASE = 143.5   
 T_BLUE_SPARK_START  = 149.2
 T_ORANGE_SPARK_BASE = 155.59
 
-# ========= PUNTOS CLAVE (0-based) =========
-# Estos índices son absolutos y funcionan con el nuevo layout lineal
+# Tiempos de RF (Definidos aquí para usarlos en el Timeline)
+T_FALLO_MOTOR  = 40.23
+T_PRUEBA_MOTOR = 49.27
+T_ENCENDIDO    = 66.7
+T_RUEDAS       = 127.53
+
+# ========= PUNTOS CLAVE LEDs =========
 LED_CLOCK = [54, 55]   
 LED_CAR   = [42, 41]   
 
 # ========= PATH DEL RAYO =========
-# Índices absolutos para el recorrido del rayo
-PRE_PATH_1 = list(range(100, 132))            # 100→131 (Zona 1)
-PRE_PATH_2 = list(range(68, 59, -1))          # 68→60 (Zona 2)
-PAUSE_CLOCK_LEDS = LED_CLOCK                  
-TRAVEL_PATH_TO_CAR = list(range(55, 40, -1))  # 55→41
+PRE_PATH_1 = list(range(100, 132))            
+PRE_PATH_2 = list(range(68, 59, -1))          
+TRAVEL_PATH_TO_CAR = list(range(55, 40, -1))  
 
 PRE_TOTAL_S = 2.4       
 PRE_HOLD_CLOCK = 0.18   
@@ -91,7 +87,6 @@ def idle_ambient(phase: float):
     return frame_fill(base)
 
 def _add_white_guarded(px, i, val):
-    # Usa white_allowed importado que consulta ZONA_PROPERTIES_MAP
     if white_allowed(i): add(px, i, scale(WHITE, val))
     else:                add(px, i, scale(ELECTRIC_BLUE, val * 0.8)) 
 
@@ -131,7 +126,6 @@ def crackle(px, centers, spread=5, density=0.6, color='white'):
                 add(px, i, col)
 
 def draw_along_path(px, path: List[int], head_pos: float, tail: int = 10, color='blue', head_gain=2.0):
-    """Dibuja un trazo con 'head' que avanza a lo largo de 'path'."""
     if not path: return
     head_idx = int(max(0, min(len(path) - 1, round(head_pos * (len(path) - 1)))))
     for j in range(tail):
@@ -140,25 +134,19 @@ def draw_along_path(px, path: List[int], head_pos: float, tail: int = 10, color=
         led = path[idx]
         fade = max(0.0, 1.0 - j / max(1, tail))
         
-        # Decide el color efectivo según reglas de zona
         effective_color = WHITE if color == 'white' and white_allowed(led) else ELECTRIC_BLUE
         
         add(px, led, scale(effective_color, head_gain * fade))
         if led - 1 >= 0: add(px, led - 1, scale(effective_color, 0.45 * fade))
         if led + 1 < N: add(px, led + 1, scale(effective_color, 0.45 * fade))
 
-
 def apply_converge_effect(px, progress, color, crackle_color, tail=5, bloom_base=0.35, bloom_amp=0.25, head_gain=2.4, center_gain=1.8):
-    # Usa constantes o lógica de índices si estos LEDs (36, 54) son fijos en tu maqueta.
     SPARK_LEFT_LED, SPARK_RIGHT_LED = 36, 54
     SPARK_CENTER_LED = (SPARK_LEFT_LED + SPARK_RIGHT_LED) // 2
-    
-    # Lógica simplificada de serpiente (mantenida del original)
     progress = max(0.0, min(1.0, progress))
     center = SPARK_CENTER_LED
     left_head  = int(round(lerp(SPARK_LEFT_LED, center, progress)))
     right_head = int(round(lerp(SPARK_RIGHT_LED, center + 1, progress)))
-    
     for k in range(tail):
         fade = max(0.0, 1.0 - k / max(1, tail))
         idx_left = left_head - k
@@ -167,14 +155,11 @@ def apply_converge_effect(px, progress, color, crackle_color, tail=5, bloom_base
         idx_right = right_head + k
         if center < idx_right <= SPARK_RIGHT_LED:
             add(px, idx_right, scale(color, head_gain * fade))
-            
-    # Bloom central
     base_bloom = bloom_base + bloom_amp * math.sin(progress * math.pi)
     for idx in range(SPARK_LEFT_LED, SPARK_RIGHT_LED + 1):
         dist = abs(idx - SPARK_CENTER_LED)
         weight = max(0.1, 1.0 - dist / max(1, (SPARK_RIGHT_LED - SPARK_LEFT_LED + 1)))
         add(px, idx, scale(color, base_bloom * weight))
-        
     centers = [SPARK_LEFT_LED, SPARK_RIGHT_LED, SPARK_CENTER_LED]
     crackle(px, centers, spread=2, density=0.65, color=crackle_color)
 
@@ -184,21 +169,17 @@ def apply_orange_converge_effect(px, progress):
 def apply_blue_converge_effect(px, progress):
     apply_converge_effect(px, progress, ELECTRIC_BLUE, 'blue', bloom_base=0.25, bloom_amp=0.2)
 
-# ========= FX por zona =========
 def storm_clouds_zone1(px, density: float = 0.14):
-    """Nubes blancas SOLO en la Zona 1."""
     if not ZONE1: return
     if random.random() < density:
         size = random.randint(2, 5)
         center = random.choice(ZONE1)
         for j in range(-size, size + 1):
             idx = center + j
-            # Se apoya en white_allowed para filtrar (via _add_white_guarded)
             if idx in ZONE1_SET: 
                 _add_white_guarded(px, idx, 1.4 * (1 - abs(j) / (size + 1)))
 
 def global_flash_white(hold_ms=550, power=1.0):
-    """Flash blanco global sin guardas."""
     px = frame_fill(scale(WHITE, 2.5 * power))
     send_frame(px, duration=int(hold_ms))
 
@@ -219,7 +200,6 @@ def cleanup():
     try:
         send_frame(frame_fill((0, 0, 0)), duration=500)
     except: pass
-
 atexit.register(cleanup)
 
 def start_mpv(video_path):
@@ -289,38 +269,54 @@ def run_show_with_video(video_path, clock_offset, car_offset):
     start_mpv(video_path)
     connect_ipc()
 
+    # Cálculo de tiempos finales
     T_CLOCK  = T_CLOCK_BASE  + clock_offset
     T_IMPACT = T_IMPACT_BASE + car_offset
+
+    # CORRECCIÓN: Definición de variables Spark
     T_BLUE_SPARK   = T_BLUE_SPARK_START
     T_ORANGE_SPARK = T_ORANGE_SPARK_BASE
-    T_FALLO_MOTOR = 40.23
-    T_PRUEBA_MOTOR =  49.27
-    T_ENCENDIDO= 66.7
-    T_RUEDAS= 127.53
+
+    # --- DEFINICIÓN DE LA COLA DE EVENTOS RF (TIMELINE) ---
+    rf_timeline = [
+        # Inicio
+        (2.0, "front"),
+        (2.0, "rear"), 
+        
+        # Fallo de motor
+        (T_FALLO_MOTOR, "front"), 
+        (T_FALLO_MOTOR, "rear"), 
+        
+        # Encendido
+        (T_ENCENDIDO, "front"),
+        (T_ENCENDIDO, "rear"),
+        
+        # Ruedas
+        (T_RUEDAS,       "wheels"),
+        (T_RUEDAS + 1.5, "wheels"), 
+        
+        # Impacto
+        (T_IMPACT, "blue_front"),
+        (T_IMPACT, "blue_rear")
+    ]
+    
+    rf_timeline.sort(key=lambda x: x[0])
+    next_rf_idx = 0 
 
     fired_clock = False
     fired_travel = False
     fired_impact = False
     fired_blue = False
     fired_orange = False
-
     pre_start_time = None
     travel_start_time = None
     white_hold_until  = None
     post_set_time     = None
     post_hold_s       = 4.0
     POST_FADE_S       = 1.8
-    lucesfront = 0
-    lucesback = 0
-    ruedas = 0
-    azules = 0
+    
+    rf = RFManager() 
 
-    rfdevice = RFDevice(17)
-    rfdevice.enable_tx()
-    rfdevice.tx_repeat = 4
-    rfprotocol = 1
-    rfpulselength = 396
-    rflength = 24
     try:
         while True:
             if mpv_proc.poll() is not None:
@@ -331,6 +327,13 @@ def run_show_with_video(video_path, clock_offset, car_offset):
                 time.sleep(1.0 / FPS)
                 continue
 
+            # --- LÓGICA RF: COLA DE EVENTOS ---
+            while next_rf_idx < len(rf_timeline) and t >= rf_timeline[next_rf_idx][0]:
+                event_time, code_name = rf_timeline[next_rf_idx]
+                rf.send(code_name)
+                next_rf_idx += 1
+
+            # --- RESTO DE EFECTOS VISUALES (LEDs) ---
             if white_hold_until is not None and t < white_hold_until:
                 send_frame(frame_fill(scale(WHITE, 2.5)))
                 time.sleep(1.0 / FPS)
@@ -338,46 +341,10 @@ def run_show_with_video(video_path, clock_offset, car_offset):
 
             px = idle_ambient(phase=(t or 0) * 0.25)
 
-            # Nubes SOLO en Zona 1
             if t < (T_CLOCK - 0.05):
                 storm_clouds_zone1(px, density=0.14)
 
-            # --- LOGICA RF (Mantenida original) ---
-            if t >= 2 and t < 2.1:
-                if lucesfront == 0:
-                    rfdevice.tx_code(RF_CODES["front"], rfprotocol, rfpulselength, rflength)
-                    lucesfront = 1
-            if t >= 2.2 and t < 2.3:
-                if lucesback == 0:
-                    rfdevice.tx_code(RF_CODES["rear"], rfprotocol, rfpulselength, rflength)
-                    lucesback =1
-            if t >= T_FALLO_MOTOR and t < T_FALLO_MOTOR + 0.1:
-                if lucesfront == 1:
-                    rfdevice.tx_code(RF_CODES["front"], rfprotocol, rfpulselength, rflength)
-                    lucesfront =0
-            if t >= T_FALLO_MOTOR+0.2 and t < T_FALLO_MOTOR + 0.3:
-                if lucesback == 1:
-                    rfdevice.tx_code(RF_CODES["rear"], rfprotocol, rfpulselength, rflength)
-                    lucesback =0
-            
-            if t >= T_ENCENDIDO and t < T_ENCENDIDO + 0.1:
-                if lucesfront == 0:
-                    rfdevice.tx_code(RF_CODES["front"], rfprotocol, rfpulselength, rflength)
-                    lucesfront =1
-            if t >= T_ENCENDIDO+0.2 and t < T_ENCENDIDO + 0.3:
-                if lucesback == 0:
-                    rfdevice.tx_code(RF_CODES["rear"], rfprotocol, rfpulselength, rflength)
-                    lucesback =1
-            if t >= T_RUEDAS and t < T_RUEDAS + 0.2:
-                if ruedas == 0:
-                    rfdevice.tx_code(RF_CODES["wheels"], rfprotocol, rfpulselength, rflength)
-                    ruedas =1
-            if t >= T_RUEDAS + 1.5 and t < T_RUEDAS + 1.7:
-                if ruedas == 0:
-                    rfdevice.tx_code(RF_CODES["wheels"], rfprotocol, rfpulselength, rflength)
-                    ruedas =1
-
-            # Prefase Rayo
+            # Rayo (Prefase)
             if t >= (T_CLOCK - PRE_TOTAL_S) and t < T_CLOCK:
                 if pre_start_time is None:
                     pre_start_time = t
@@ -409,18 +376,8 @@ def run_show_with_video(video_path, clock_offset, car_offset):
                 draw_along_path(px, TRAVEL_PATH_TO_CAR, u, tail=10, color='blue', head_gain=2.1)
                 if u >= 1.0:
                     fired_travel = True
-
-            if t >= T_IMPACT and t< T_IMPACT+0.1:
-                if azules == 0:
-                    rfdevice.tx_code(RF_CODES["blue_front"], rfprotocol, rfpulselength, rflength)
-                    azules = 1
             
-            if t >= T_IMPACT+0.2 and t< T_IMPACT+0.3:
-                if azules == 1:
-                    rfdevice.tx_code(RF_CODES["blue_rear"], rfprotocol, rfpulselength, rflength)
-                    azules = 0
-            
-            # Impacto
+            # Impacto Visual
             if t >= T_IMPACT and not fired_impact:
                 blue_flash_local(px, LED_CAR, power=2.7)
                 crackle(px, LED_CAR, spread=6, density=1.0, color='blue')
@@ -430,7 +387,7 @@ def run_show_with_video(video_path, clock_offset, car_offset):
                 post_set_time    = white_hold_until
                 continue
 
-            # Post-efecto (Fade a naranja en zona media)
+            # Post-efecto
             if post_set_time is not None and t >= post_set_time:
                 p = min(1.0, (t - post_set_time) / POST_FADE_S) 
                 white = WHITE
@@ -439,7 +396,6 @@ def run_show_with_video(video_path, clock_offset, car_offset):
 
                 px = [None] * N
                 for i in range(N):
-                    # Consulta ZONE3_SET importado para saber si es la zona media
                     target = target_orange if i in ZONE3_SET else target_blue
                     px[i] = mix(white, target, p)
 
@@ -449,7 +405,7 @@ def run_show_with_video(video_path, clock_offset, car_offset):
                         r, g, b = px[i]
                         px[i] = (r * k, g * k, b * k)
 
-            # Efectos decorativos finales
+            # Efectos decorativos finales (USAN T_BLUE_SPARK y T_ORANGE_SPARK)
             if not fired_blue and t >= T_BLUE_SPARK:
                 fired_blue = True
                 blue_effect_start = t
@@ -472,6 +428,7 @@ def run_show_with_video(video_path, clock_offset, car_offset):
             send_frame(px)
             time.sleep(1.0 / FPS)
 
+        # Fundido final
         for f in range(int(0.6 * FPS)):
             k = 1.0 - f / (0.6 * FPS)
             send_frame(frame_fill(scale(ELECTRIC_BLUE, 0.06 * k)))
@@ -480,10 +437,11 @@ def run_show_with_video(video_path, clock_offset, car_offset):
 
     finally:
         cleanup()
+        rf.cleanup()
 
 # ========= CLI =========
 def main():
-    p = argparse.ArgumentParser(description="BTTF Torre del Reloj (Refactorizado - 132 LEDs)")
+    p = argparse.ArgumentParser(description="BTTF Torre del Reloj (Timeline RF Refactorizado)")
     p.add_argument("--video", default=VIDEO_FILE_DEFAULT, help="Ruta al .mp4")
     p.add_argument("--clock-offset", type=float, default=0.0, help="Ajuste (s) rayo al reloj")
     p.add_argument("--car-offset", type=float, default=0.0, help="Ajuste (s) rayo al coche")
