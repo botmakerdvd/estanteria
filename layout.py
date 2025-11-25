@@ -1,6 +1,5 @@
 # layout.py
-# Definición unificada para estructura de 132 LEDs (4 Zonas)
-# CORREGIDO tras test visual: Z1_T y Z1_L invertidos.
+# Definición unificada para estructura de 143 LEDs (4 Zonas + Estante 0 Villanos)
 
 from typing import Dict, List
 
@@ -15,34 +14,39 @@ BLUE_SIREN     = (0, 80, 255)
 GREEN_CIRCUITS = (60, 255, 80)
 YELLOW_WARM    = (255, 200, 40)
 
-N = 132  # Total LEDs
+N = 143  # 132 (Originales) + 11 (Nuevo Estante 0)
 
 def calculate_unified_layout():
     """
-    Genera el mapeo completo de 132 LEDs en una sola pasada.
-    Configuración: (Nombre, Cantidad, ¿Invertido?)
+    Genera el mapeo completo.
+    Orden físico asumido: Z4 -> Z3 -> Z2 -> Z1 -> Z0 (Nuevo al final del cable)
     """
     SEGMENTS_CONFIG = [
         # --- ZONA 4 (Abajo: 0-29) ---
-        ("B_L", 6,  False), # 0-5
-        ("B_T", 18, False), # 6-23
-        ("B_R", 6,  True),  # 24-29 (Inv)
+        ("B_L", 6,  False),
+        ("B_T", 18, False),
+        ("B_R", 6,  True), 
 
         # --- ZONA 3 (Medio: 30-59) ---
-        ("M_R", 6,  False), # 30-35
-        ("M_T", 18, True),  # 36-53 (Inv)
-        ("M_L", 6,  True),  # 54-59 (Inv)
+        ("M_R", 6,  False),
+        ("M_T", 18, True),
+        ("M_L", 6,  True), 
 
         # --- ZONA 2 (Arriba Viejo: 60-95) ---
-        ("T_L", 9,  False), # 60-68
-        ("T_T", 18, False), # 69-86
-        ("T_R", 9,  True),  # 87-95 (Inv)
+        ("T_L", 9,  False),
+        ("T_T", 18, False),
+        ("T_R", 9,  True), 
 
-        # --- ZONA 1 (Estante Nuevo: 96-131) ---
-        # AJUSTES TRAS DIAGNÓSTICO:
-        ("Z1_R", 9,  False), # 96-104 (Columna Derecha: Correcta)
-        ("Z1_T", 18, True),  # 105-122 (Techo: INVERTIDO para ir de Izq->Der)
-        ("Z1_L", 9,  True),  # 123-131 (Columna Izquierda: INVERTIDA para ir de Abajo->Arriba)
+        # --- ZONA 1 (Estante Zords: 96-131) ---
+        # AJUSTES: Invertimos T y L para que la lógica sea Izq->Der y Abajo->Arriba
+        ("Z1_R", 9,  False), # Columna Derecha (96-104)
+        ("Z1_T", 18, True),  # Techo Zords (105-122)
+        ("Z1_L", 9,  True),  # Columna Izquierda (123-131)
+
+        # --- ZONA 0 (Villanos Nuevo: 132-142) ---
+        # Descripción: Escuadra izquierda arriba. 
+        # Cable entra por la derecha de la L -> 6 leds izq -> 5 leds arriba.
+        ("Z0_Special", 11, False), 
     ]
 
     index_map = {}
@@ -50,45 +54,37 @@ def calculate_unified_layout():
     full_path = []
 
     for name, length, is_reversed in SEGMENTS_CONFIG:
-        # Generar rango de IDs para este segmento
         ids = list(range(current_id, current_id + length))
-        
-        # Aplicar inversión lógica si el cableado lo requiere
         if is_reversed:
             ids.reverse()
-            
         index_map[name] = ids
-        full_path += ids # Camino lógico completo para efectos de barrido
+        full_path += ids
         current_id += length
 
     return index_map, full_path
 
-# --- EJECUCIÓN DEL CÁLCULO ---
+# --- EJECUCIÓN ---
 INDEX, FULL_PATH = calculate_unified_layout()
 
 # --- DEFINICIÓN DE ZONAS ---
-# Construimos las zonas simplemente sumando las listas del INDEX ya calculado
-ZONE4 = INDEX["B_L"] + INDEX["B_T"] + INDEX["B_R"]  # Abajo
-ZONE3 = INDEX["M_L"] + INDEX["M_T"] + INDEX["M_R"]  # Medio
-ZONE2 = INDEX["T_L"] + INDEX["T_T"] + INDEX["T_R"]  # Arriba
-ZONE1 = INDEX["Z1_R"] + INDEX["Z1_T"] + INDEX["Z1_L"] # Super-Arriba (Nuevo)
+ZONE4 = INDEX["B_L"] + INDEX["B_T"] + INDEX["B_R"]
+ZONE3 = INDEX["M_L"] + INDEX["M_T"] + INDEX["M_R"]
+ZONE2 = INDEX["T_L"] + INDEX["T_T"] + INDEX["T_R"]
+ZONE1 = INDEX["Z1_R"] + INDEX["Z1_T"] + INDEX["Z1_L"]
+ZONE0 = INDEX["Z0_Special"] # Nueva zona villanos
 
-# Sets para búsqueda rápida
-ZONE1_SET, ZONE2_SET, ZONE3_SET, ZONE4_SET = set(ZONE1), set(ZONE2), set(ZONE3), set(ZONE4)
+ZONE1_SET, ZONE2_SET, ZONE3_SET, ZONE4_SET, ZONE0_SET = set(ZONE1), set(ZONE2), set(ZONE3), set(ZONE4), set(ZONE0)
 
-# Alias para compatibilidad con lógica de efectos (Top/Middle/Bottom)
-TOP_ZONE, MIDDLE_ZONE, BOTTOM_ZONE = ZONE2, ZONE3, ZONE4
-
-# --- MAPA DE PROPIEDADES DE ZONA (Reglas) ---
+# --- MAPA DE PROPIEDADES DE ZONA ---
 ZONE_PROPERTIES_MAP = {
-    "ZONE1": {"set": ZONE1_SET, "white_allowed": True},  # Única zona con blanco permitido
+    "ZONE0": {"set": ZONE0_SET, "white_allowed": True},  # Villanos
+    "ZONE1": {"set": ZONE1_SET, "white_allowed": True},  # Zords
     "ZONE2": {"set": ZONE2_SET, "white_allowed": False},
     "ZONE3": {"set": ZONE3_SET, "white_allowed": False},
     "ZONE4": {"set": ZONE4_SET, "white_allowed": False},
 }
 
 def white_allowed(i: int) -> bool:
-    """Consulta si el LED 'i' permite color blanco puro."""
     for props in ZONE_PROPERTIES_MAP.values():
         if i in props["set"]:
             return props["white_allowed"]
