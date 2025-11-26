@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # power.py
-# VERSIÓN FINAL "REAL-TIME ENGINE":
-# - Elimina el LAG de lectura vaciando el buffer del socket antes de cada consulta.
-# - Renderizado frame a frame (Stateless) para sincronización perfecta.
-# - Incluye tus peticiones: Megazord por estantes, Chispas de color, etc.
+# VERSIÓN FINAL "FIXED MAPPING":
+# - Villanos movidos CORRECTAMENTE a Z0_Special (Estante L).
+# - Zords se quedan en Z1_T.
+# - Sincronización real-time intacta.
 
 import time
 import math
@@ -21,13 +21,10 @@ from itertools import chain
 # --- IMPORTACIÓN SEGURA ---
 try:
     from layout import *
-    # Fallbacks de seguridad
-    if "Z1_T" not in INDEX: INDEX["Z1_T"] = list(range(105, 123))
-    if "T_T" not in INDEX:  INDEX["T_T"]  = list(range(69, 87))
-    if "Z1_R" not in INDEX: INDEX["Z1_R"] = []
-    if "Z1_L" not in INDEX: INDEX["Z1_L"] = []
-    if "T_R" not in INDEX:  INDEX["T_R"]  = []
-    if "T_L" not in INDEX:  INDEX["T_L"]  = []
+    # Fallback de seguridad para Zona 0 si layout.py no se actualizó bien
+    if "Z0_Special" not in INDEX: 
+        # Asumimos que son los siguientes 11 tras los 132 originales
+        INDEX["Z0_Special"] = list(range(132, 143))
 except ImportError:
     print("[ERROR] Falta 'layout.py'.")
     sys.exit(1)
@@ -43,7 +40,6 @@ HOST = "http://localhost:8090"
 PRIORITY = 50
 ORIGIN = "PowerRangersUltimate"
 
-# VIDEO CONFIG
 VIDEO_FILE = "/home/pi/251121/power.mp4"
 AUDIO_DEVICE = "alsa/hdmi:CARD=vc4hdmi,DEV=0"
 SOCK_PATH = "/tmp/mpv_rangers.sock"
@@ -52,7 +48,6 @@ MPV_LOG = "/tmp/mpv_rangers.log"
 # COLORES
 C_OFF    = (0, 0, 0)
 C_FINAL_AMBIENT = (120, 120, 120) 
-
 C_RED    = (255, 0, 0)
 C_YELLOW = (255, 180, 0)
 C_BLACK  = (60, 0, 100)   
@@ -60,50 +55,60 @@ C_BLUE   = (0, 0, 255)
 C_PINK   = (255, 0, 110)
 C_WHITE  = (200, 220, 255)
 C_GREEN  = (0, 255, 0)
-C_RITA   = (180, 0, 255)   # Morado
-C_ZEDD   = (255, 0, 0)     # Rojo Sangre
+C_RITA   = (180, 0, 255)   
+C_ZEDD   = (255, 0, 0)     
 C_ZORDON = (0, 220, 255)   
 C_ALFA   = (255, 50, 50)
 C_GOLD   = (255, 160, 20)
 C_ALARM_A = (255, 0, 0)
 C_ALARM_B = (255, 200, 0)
 
-# ========= MAPEO DE ZONAS =========
-# Ajustado para contar desde la derecha en Z1 y Z2 según tus indicaciones previas
-Z1_STRIP = list(reversed(INDEX["Z1_T"])) 
-Z1_SIDE_R = INDEX.get("Z1_R", [])
+# ========= MAPEO DE ZONAS (CORREGIDO) =========
 
-LEDS_VILLAINS    = Z1_STRIP[0:5]
-LEDS_VILLAINS_FULL = LEDS_VILLAINS + Z1_SIDE_R
+# 1. ZONA 0 (VILLANOS - NUEVO ESTANTE)
+# Recuperamos los 11 LEDs de la escuadra superior
+Z0_STRIP = INDEX["Z0_Special"]
+# Rita (Horizontal, primeros 6)
+LEDS_RITA = Z0_STRIP[0:11]
+# Zedd (Vertical, últimos 5)
+LEDS_ZEDD = Z0_STRIP[0:11]
+# Grupo completo
+LEDS_VILLAINS_FULL = Z0_STRIP
 
-LEDS_ZORD_YELLOW = Z1_STRIP[5:7]
-LEDS_ZORD_BLACK  = [Z1_STRIP[7]]
-LEDS_ZORD_RED    = [Z1_STRIP[8]]
-LEDS_ZORD_PINK   = Z1_STRIP[9:11]
-LEDS_ZORD_BLUE   = Z1_STRIP[11:13]
-LEDS_ZORD_WHITE  = Z1_STRIP[13:18]
+# 2. ZONA 1 (ZORDS)
+# Usamos Z1_T tal cual viene de layout
+Z1_STRIP = INDEX["Z1_T"]
 
-Z2_STRIP = list(reversed(INDEX["T_T"]))
+# Mapeo Zords (Indices 0-based sobre Z1_STRIP)
+LEDS_ZORD_RED    = Z1_STRIP[14:18]    
+LEDS_ZORD_YELLOW = Z1_STRIP[11:14]     
+LEDS_ZORD_PINK   = Z1_STRIP[8:11]   
+LEDS_ZORD_BLACK  = Z1_STRIP[8:11]
+LEDS_ZORD_BLUE   = Z1_STRIP[5:8]   
+LEDS_ZORD_WHITE  = Z1_STRIP[0:5]   
 
-POS_R_RED    = Z2_STRIP[4:6]
-POS_R_YELLOW = Z2_STRIP[6:8]
-POS_R_BLACK  = Z2_STRIP[8:10]
-POS_R_BLUE   = Z2_STRIP[9:11]  
-POS_R_PINK   = Z2_STRIP[11:13]
-POS_R_WHITE  = Z2_STRIP[13:15]
+# 3. ZONA 2 (RANGERS)
+Z2_STRIP = list(reversed(INDEX["T_T"])) # Contamos desde derecha
+
+POS_R_RED    = Z2_STRIP[0:5]
+POS_R_YELLOW = Z2_STRIP[5:8]
+POS_R_BLACK  = Z2_STRIP[8:11]
+POS_R_BLUE   = Z2_STRIP[11:14]  
+POS_R_PINK   = Z2_STRIP[8:11]
+POS_R_WHITE  = Z2_STRIP[14:19]
 
 LEDS_ZORDON  = Z2_STRIP[7:11] 
 LEDS_ALFA    = LEDS_ZORDON 
 
+# 4. COLUMNAS Y LATERALES
 COL_RIGHT_UP = INDEX.get("T_R", []) + INDEX.get("Z1_R", [])
 COL_LEFT_UP  = INDEX.get("T_L", []) + INDEX.get("Z1_L", [])
-
 ALL_SIDES = []
 for k, v in INDEX.items():
     if "_L" in k or "_R" in k: 
         ALL_SIDES.extend(v)
 
-# TIMELINE EXACTO (secuencia_final.txt)
+# TIMELINE
 T_RITA_END        = 9.84
 T_ZEDD_END        = 14.12
 T_START_ALARM     = 14.12
@@ -120,7 +125,6 @@ T_START_NEED_MZ   = 67.52
 T_START_MEGAZORD  = 71.20 
 T_START_FINAL     = 113.40
 
-# Estructura: (Tiempo, Nombre, LedsRanger, Color, LedsZord)
 RANGERS_TIMELINE = [
     (T_START_RED,    "RED",    POS_R_RED,    C_RED,    LEDS_ZORD_RED),
     (T_START_YELLOW, "YELLOW", POS_R_YELLOW, C_YELLOW, LEDS_ZORD_YELLOW),
@@ -130,7 +134,7 @@ RANGERS_TIMELINE = [
     (T_START_WHITE,  "WHITE",  POS_R_WHITE,  C_WHITE,  LEDS_ZORD_WHITE),
 ]
 
-# ========= GESTIÓN MPV (ANTILAG) =========
+# ========= GESTIÓN MPV =========
 mpv_proc = None
 ipc_sock = None
 
@@ -174,45 +178,23 @@ def connect_ipc(timeout=10.0):
     try:
         ipc_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         ipc_sock.connect(SOCK_PATH)
-        # Ponemos el socket en modo no bloqueante para poder vaciarlo
         return True
     except: return False
 
 def get_video_time():
-    """Lee el tiempo actual VACÍA EL BUFFER PRIMERO para evitar leer datos viejos (LAG)"""
     if not ipc_sock: return -1.0
-    
-    # 1. VACIAMOS EL BUFFER (Anti-Lag)
-    try:
-        ipc_sock.setblocking(0) # No bloqueante
-        while True:
-            # Leemos hasta que no quede nada
-            data = ipc_sock.recv(4096)
-            if not data: break
-    except BlockingIOError:
-        pass # Buffer vacío, perfecto
-    except Exception:
-        return -1.0 # Error de conexión
-
-    # 2. PEDIMOS EL TIEMPO REAL
     req = json.dumps({"command": ["get_property", "time-pos"], "request_id": 1}) + "\n"
     try:
-        ipc_sock.setblocking(1) # Volvemos a bloquear para esperar ESTA respuesta
-        ipc_sock.settimeout(0.1)
         ipc_sock.sendall(req.encode("utf-8"))
-        
+        ipc_sock.settimeout(0.1)
         data = ipc_sock.recv(4096).decode("utf-8")
         for line in data.split('\n'):
             if not line: continue
-            try:
-                msg = json.loads(line)
-                if msg.get("error") == "success" and "data" in msg:
-                    val = msg["data"]
-                    return float(val) if val is not None else 0.0
-            except: pass
-    except Exception:
-        pass
-        
+            msg = json.loads(line)
+            if msg.get("error") == "success" and "data" in msg:
+                val = msg["data"]
+                return float(val) if val is not None else 0.0
+    except: pass
     return -1.0
 
 # ========= UTILIDADES GRÁFICAS =========
@@ -223,8 +205,6 @@ def send_frame(pixels, duration=-1):
     for r, g, b in pixels:
         flat.extend([int(r), int(g), int(b)])
     try:
-        # Duration -1 significa mantener hasta nueva orden. 
-        # timeout muy bajo para no bloquear el bucle principal
         requests.post(f"{HOST}/json-rpc", 
                       json={"command":"color", "color":flat, "priority":PRIORITY, "origin":ORIGIN, "duration":-1}, 
                       timeout=0.04) 
@@ -249,20 +229,91 @@ def scale(c, k): return (int(c[0]*k), int(c[1]*k), int(c[2]*k))
 def mix(c1, c2, t): 
     return (int(c1[0]+(c2[0]-c1[0])*t), int(c1[1]+(c2[1]-c1[1])*t), int(c1[2]+(c2[2]-c1[2])*t))
 
-# ========= RENDERIZADORES (FRAME A FRAME / STATELESS) =========
-# Estas funciones reciben el tiempo transcurrido (elapsed) y pintan 1 fotograma.
-# NO contienen bucles while ni sleep.
+# ========= EFECTOS =========
+def effect_climb(base_col, duration):
+    t0 = time.time()
+    while (time.time() - t0) < duration:
+        t_norm = (time.time() - t0) / duration
+        phase = (t_norm * 3) % 1.0
+        px = get_base_frame()
+        h_active = phase * 4
+        zones = [INDEX["B_L"]+INDEX["B_R"]+INDEX["B_T"], 
+                 INDEX["M_L"]+INDEX["M_R"]+INDEX["M_T"], 
+                 INDEX["T_L"]+INDEX["T_R"]+INDEX["T_T"], 
+                 INDEX["Z1_L"]+INDEX["Z1_R"]+INDEX["Z1_T"]]
+        for z_idx, zone in enumerate(zones):
+            dist = abs(z_idx - h_active)
+            if dist < 1.2:
+                k = 1.0 - (dist/1.2)
+                for i in zone: 
+                    if i not in ACTIVE_ZORDS: add_color(px, i, scale(base_col, k))
+        send_frame(px); time.sleep(0.05)
+
+def effect_lightning(base_col, duration):
+    t0 = time.time()
+    while (time.time() - t0) < duration:
+        px = get_base_frame()
+        for i in range(N):
+            if i not in ACTIVE_ZORDS and random.random() < 0.1:
+                add_color(px, i, scale(base_col, 0.3))
+        for _ in range(5):
+            pos = random.randint(0, N-1)
+            if pos not in ACTIVE_ZORDS:
+                set_color(px, pos, C_WHITE)
+                if pos+1 < N: add_color(px, pos+1, scale(base_col, 0.7))
+        send_frame(px); time.sleep(0.04)
+
+def effect_energy_implosion(ranger_leds, color, duration):
+    t0 = time.time()
+    while (time.time() - t0) < duration:
+        t_norm = (time.time() - t0) / duration
+        px = get_base_frame()
+        ranger_bright = scale(color, 0.2 + 0.8 * (t_norm**2))
+        for i in ranger_leds: set_color(px, i, ranger_bright)
+        density = 0.2 * (1.0 - t_norm)
+        for i in range(N):
+            if i not in ACTIVE_ZORDS and i not in ranger_leds:
+                if random.random() < density:
+                    add_color(px, i, scale(color, 0.8))
+        send_frame(px); time.sleep(0.05)
+
+def effect_snake_transfer(start_leds, end_leds, color, duration):
+    t0 = time.time()
+    while (time.time() - t0) < duration:
+        t_norm = (time.time() - t0) / duration
+        px = get_base_frame()
+        if t_norm < 0.3:
+            for i in start_leds: set_color(px, i, color)
+        if t_norm > 0.1 and t_norm < 0.9:
+            climb_t = (t_norm - 0.1) / 0.7
+            for col_strip in [COL_RIGHT_UP, COL_LEFT_UP]:
+                strip_len = len(col_strip)
+                head_pos = int(climb_t * strip_len)
+                for k in range(5):
+                    idx = head_pos - k
+                    if 0 <= idx < strip_len:
+                        intensity = 1.0 - (k/5.0)
+                        led_idx = col_strip[idx]
+                        add_color(px, led_idx, scale(color, intensity))
+        if t_norm > 0.8:
+            if int(time.time()*20) % 2 == 0:
+                for i in end_leds: set_color(px, i, C_WHITE)
+            else:
+                for i in end_leds: set_color(px, i, color)
+        send_frame(px); time.sleep(0.03)
+
+# ========= RENDERIZADORES =========
 
 def render_rita(elapsed):
     k = 0.2 + 0.8 * ((math.sin(elapsed*3)+1)/2)
     px = get_base_frame()
-    for i in LEDS_VILLAINS_FULL: set_color(px, i, scale(C_RITA, k))
+    for i in LEDS_RITA: set_color(px, i, scale(C_RITA, k))
     send_frame(px)
 
 def render_zedd(elapsed):
     k = 0.4 + 0.6 * ((math.sin(elapsed*4)+1)/2)
     px = get_base_frame()
-    for i in LEDS_VILLAINS_FULL: set_color(px, i, scale(C_ZEDD, k))
+    for i in LEDS_ZEDD: set_color(px, i, scale(C_ZEDD, k))
     send_frame(px)
 
 def render_alarm(elapsed):
@@ -291,20 +342,12 @@ def render_zordon(elapsed):
     px = get_base_frame()
     z_int = random.uniform(0.6, 1.0)
     for i in LEDS_ZORDON: set_color(px, i, scale(C_ZORDON, z_int))
-    # Onda de voz
     wave = (elapsed * 8) % 10
-    columnas = [INDEX["Z1_L"], INDEX["Z1_R"], INDEX["T_L"], INDEX["T_R"]]
-    
-    for col_list in columnas:
+    for col_list in [INDEX["Z1_L"], INDEX["Z1_R"], INDEX["T_L"], INDEX["T_R"]]:
          L = len(col_list)
          for idx, led in enumerate(col_list):
-             # TRUCO: Usamos (L - 1 - idx) para invertir la dirección
-             # Si idx 0 es abajo, (L-1-idx) hace que el 0 sea "arriba" virtualmente
              dist = abs((L - 1 - idx) - wave)
-             
-             if dist < 2: 
-                 add_color(px, led, scale(C_ZORDON, 0.5))
-                 
+             if dist < 2: add_color(px, led, scale(C_ZORDON, 0.5))
     send_frame(px)
 
 def render_call_megazord(elapsed):
@@ -320,22 +363,20 @@ def render_call_megazord(elapsed):
 def render_ranger_morph(elapsed, duration, r_leds, r_col, z_leds):
     px = get_base_frame()
     
-    # Fases: Implosion (35%) -> Climb (20%) -> Snake (25%) -> Lightning (20%)
     p1 = duration * 0.35
     p2 = p1 + (duration * 0.20)
     p3 = p2 + (duration * 0.25)
     
-    if elapsed < p1: # Implosion
+    if elapsed < p1: 
         t = elapsed / p1
         ranger_bright = scale(r_col, 0.2 + 0.8 * (t**2))
         for i in r_leds: set_color(px, i, ranger_bright)
-        # Chispas del color del ranger
         density = 0.2 * (1.0 - t)
         for i in range(N):
-            if i not in r_leds:
+            if i not in ACTIVE_ZORDS and i not in r_leds:
                 if random.random() < density: add_color(px, i, scale(r_col, 0.8))
     
-    elif elapsed < p2: # Climb
+    elif elapsed < p2: 
         t = (elapsed - p1) / (duration * 0.20)
         h_active = (t * 3) % 1.0 * 4
         zones = [INDEX["B_L"]+INDEX["B_R"]+INDEX["B_T"], 
@@ -346,9 +387,9 @@ def render_ranger_morph(elapsed, duration, r_leds, r_col, z_leds):
             if abs(z_idx - h_active) < 1.2:
                 k = 1.0 - (abs(z_idx - h_active)/1.2)
                 for i in zone: 
-                    add_color(px, i, scale(r_col, k))
+                    if i not in ACTIVE_ZORDS: add_color(px, i, scale(r_col, k))
         
-    elif elapsed < p3: # Snake
+    elif elapsed < p3: 
         t = (elapsed - p2) / (duration * 0.25)
         if t < 0.3:
             for i in r_leds: set_color(px, i, r_col)
@@ -369,23 +410,22 @@ def render_ranger_morph(elapsed, duration, r_leds, r_col, z_leds):
             else:
                 for i in z_leds: set_color(px, i, r_col)
 
-    else: # Lightning
+    else: 
         for i in range(N):
             if i not in ACTIVE_ZORDS and random.random() < 0.1:
                 add_color(px, i, scale(r_col, 0.3))
         for _ in range(5):
             pos = random.randint(0, N-1)
-            set_color(px, pos, C_WHITE)
-            if pos+1 < N: add_color(px, pos+1, scale(r_col, 0.7))
+            if pos not in ACTIVE_ZORDS:
+                set_color(px, pos, C_WHITE)
+                if pos+1 < N: add_color(px, pos+1, scale(r_col, 0.7))
     
     send_frame(px)
 
 def render_megazord_complex(elapsed):
-    #px = get_base_frame() 
-    px = [C_OFF] * N
+    px = get_base_frame() 
     ASSEMBLY_COLORS = [C_YELLOW, C_BLACK, C_BLUE, C_PINK, C_WHITE]
     
-    # Mapeo de estantes por colores (Z4->Amarillo, Z3->Azul, Z2->Rosa, Z1->Rojo)
     ZONES_MAP = [
         (INDEX["B_L"]+INDEX["B_R"]+INDEX["B_T"], C_YELLOW), 
         (INDEX["M_L"]+INDEX["M_R"]+INDEX["M_T"], C_BLUE),   
@@ -393,42 +433,36 @@ def render_megazord_complex(elapsed):
         (INDEX["Z1_L"]+INDEX["Z1_R"]+INDEX["Z1_T"], C_RED)  
     ]
     
-    #if elapsed < 8.0:
-        # Estantes por color
-    #    for zone_leds, z_col in ZONES_MAP:
-    #        for i in zone_leds:
-    #            if i not in ACTIVE_ZORDS: set_color(px, i, scale(z_col, 0.15))
-        # Scanner Rojo
-    #    for i in LEDS_ZORD_RED: set_color(px, i, C_RED)
-    #    scan_pos = int((elapsed * 15) % len(Z1_STRIP))
-    #    set_color(px, Z1_STRIP[scan_pos], C_GOLD)
+    if elapsed < 8.0:
+        for zone_leds, z_col in ZONES_MAP:
+            for i in zone_leds:
+                set_color(px, i, scale(z_col, 0.15))
+        #for i in LEDS_ZORD_RED: set_color(px, i, C_RED)
+        scan_pos = int((elapsed * 15) % len(Z1_STRIP))
+        set_color(px, Z1_STRIP[scan_pos], C_GOLD)
         
-    if elapsed < 18.0:
-        # Respiración Estantes
+    elif elapsed < 18.0:
         breath = (math.sin(elapsed * 10) + 1) / 2
         for zone_leds, z_col in ZONES_MAP:
             for i in zone_leds:
                 set_color(px, i, scale(z_col, 0.2 + 0.6*breath))
-        # Vapor
         for i in ALL_SIDES:
             if random.random() < 0.15: set_color(px, i, scale(C_WHITE, 0.6))
             
     elif elapsed < 28.0:
-        # Rayos
         for _ in range(3):
             pos = random.randint(0, N-1)
+            #if pos not in ACTIVE_ZORDS:
             set_color(px, pos, C_WHITE)
             if pos+1 < N: add_color(px, pos+1, C_BLUE)
                 
     elif elapsed < 35.0:
-        # Cockpit
         for _, _, r_leds, r_col, _ in RANGERS_TIMELINE:
             for i in r_leds: set_color(px, i, r_col)
         for idx in ACTIVE_ZORDS.keys():
             set_color(px, idx, C_GOLD)
             
     else:
-        # Carga Final
         cycle = (elapsed - 35.0) * 2
         h_fill = (cycle % 1.0) * 4
         zones_list = [z[0] for z in ZONES_MAP]
@@ -461,12 +495,10 @@ def run_show():
             if mpv_proc.poll() is not None: break
             t_video = get_video_time()
             
-            # Si hay error de lectura, esperamos y reintentamos (sin parar el loop)
             if t_video < 0:
                 time.sleep(0.04)
                 continue
 
-            # Guardia de inicio
             if not video_started:
                 if t_video > 0.1:
                     video_started = True
@@ -476,8 +508,7 @@ def run_show():
                     time.sleep(0.04)
                     continue
             
-            # --- SELECTOR DE ESCENA (FRAME A FRAME) ---
-            
+            # --- SELECTOR DE ESCENA ---
             if t_video < T_RITA_END:
                 render_rita(t_video)
             elif t_video < T_ZEDD_END:
@@ -493,21 +524,19 @@ def run_show():
             
             elif t_video < T_START_MEGAZORD:
                 if t_video < T_START_NEED_MZ:
-                    # Rangers Logic
                     curr_ranger_idx = -1
                     for idx, (start_t, _, _, _, _) in enumerate(RANGERS_TIMELINE):
                         if t_video >= start_t: curr_ranger_idx = idx
                         else: break
                     
                     if curr_ranger_idx >= 0:
-                        # Guardar Zords anteriores si hemos cambiado de ranger
                         if curr_ranger_idx > last_ranger_processed:
                             if last_ranger_processed >= 0:
                                 prev_z_leds = RANGERS_TIMELINE[last_ranger_processed][4]
                                 prev_z_col  = RANGERS_TIMELINE[last_ranger_processed][3]
                                 for i in prev_z_leds: ACTIVE_ZORDS[i] = prev_z_col
                             last_ranger_processed = curr_ranger_idx
-                            print(f"\nRanger: {RANGERS_TIMELINE[curr_ranger_idx][1]}") # Debug
+                            print(f"\nRanger: {RANGERS_TIMELINE[curr_ranger_idx][1]}")
                         
                         r_start, _, r_leds, r_col, z_leds = RANGERS_TIMELINE[curr_ranger_idx]
                         if curr_ranger_idx < len(RANGERS_TIMELINE) - 1:
@@ -517,8 +546,6 @@ def run_show():
                         
                         render_ranger_morph(t_video - r_start, r_end - r_start, r_leds, r_col, z_leds)
                 else:
-                    # Call Megazord
-                    # Asegurar que White Ranger Zord está guardado
                     if last_ranger_processed == 5:
                          prev_z_leds = RANGERS_TIMELINE[5][4]
                          prev_z_col  = RANGERS_TIMELINE[5][3]
@@ -531,18 +558,19 @@ def run_show():
                 render_megazord_complex(t_video - T_START_MEGAZORD)
 
             else:
-                # Final Fijo
                 px = [C_OFF] * N
                 FINAL_ZONES = set(ZONE1 + ZONE2)
                 for i in FINAL_ZONES: px[i] = C_FINAL_AMBIENT
                 for idx, col in ACTIVE_ZORDS.items(): px[idx] = col
-                # Pintar Rangers también
                 for _, _, r_leds, r_col, _ in RANGERS_TIMELINE:
                     for i in r_leds: px[i] = r_col
-                send_frame(px)
-                time.sleep(0.5) # Refresco lento para no saturar
+                
+                for i in LEDS_VILLAINS_FULL: px[i] = C_RITA
+                for i in LEDS_ZEDD: px[i] = C_ZEDD
 
-            # Control de FPS (20fps aprox)
+                send_frame(px)
+                time.sleep(0.5)
+
             time.sleep(0.04)
 
     except KeyboardInterrupt:
