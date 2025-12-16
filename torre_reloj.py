@@ -36,12 +36,23 @@ T_RUEDAS       = 127.53
 LED_CLOCK = [54, 55]   
 LED_CAR   = [42, 41]   
 
-# ========= PATH DEL RAYO =========
-PRE_PATH_1 = list(range(100, 132))            
-PRE_PATH_2 = list(range(68, 59, -1))          
-TRAVEL_PATH_TO_CAR = list(range(55, 40, -1))  
+# ========= PATH DEL RAYO (USANDO LAYOUT.PY) =========
+# El rayo empieza en Z1 (techo superior), viaja de derecha a izquierda, y baja por la columna izquierda.
 
-PRE_TOTAL_S = 2.4       
+# 1. Viaje horizontal (derecha a izquierda) por el estante de arriba (Z1_T)
+PRE_PATH_1 = list(reversed(INDEX.get("Z1_T", [])))
+
+# 2. Viaje vertical hacia abajo por las columnas de la izquierda hasta el reloj.
+#    - Z1_L (ya está invertido en layout, de arriba a abajo)
+#    - T_L (hay que invertirlo para que baje)
+#    - M_L (ya está invertido en layout, de arriba a abajo, y contiene el reloj)
+PRE_PATH_2 = (list(reversed(INDEX.get("Z1_L", []))) + 
+              INDEX.get("T_L", []))
+
+# 3. Viaje desde el reloj (LEDs 54,55) hasta el coche (LEDs 41,42)
+TRAVEL_PATH_TO_CAR = list(range(55, 40, -1))
+
+PRE_TOTAL_S = 2.4
 PRE_HOLD_CLOCK = 0.18   
 
 # ========= HYPERION =========
@@ -281,15 +292,15 @@ def run_show_with_video(video_path, clock_offset, car_offset):
     rf_timeline = [
         # Inicio
         (2.0, "front"),
-        (2.0, "rear"), 
+     #   (2.0, "rear"), 
         
         # Fallo de motor
         (T_FALLO_MOTOR, "front"), 
-        (T_FALLO_MOTOR, "rear"), 
+     #   (T_FALLO_MOTOR, "rear"), 
         
         # Encendido
         (T_ENCENDIDO, "front"),
-        (T_ENCENDIDO, "rear"),
+     #   (T_ENCENDIDO, "rear"),
         
         # Ruedas
         (T_RUEDAS,       "wheels"),
@@ -297,7 +308,7 @@ def run_show_with_video(video_path, clock_offset, car_offset):
         
         # Impacto
         (T_IMPACT, "blue_front"),
-        (T_IMPACT, "blue_rear")
+     #   (T_IMPACT, "blue_rear")
     ]
     
     rf_timeline.sort(key=lambda x: x[0])
@@ -348,7 +359,8 @@ def run_show_with_video(video_path, clock_offset, car_offset):
             if t >= (T_CLOCK - PRE_TOTAL_S) and t < T_CLOCK:
                 if pre_start_time is None:
                     pre_start_time = t
-                    white_flash_local(px, [100, 101], power=2.0) 
+                    # Flash inicial al principio del camino del rayo (en Z1_T)
+                    if PRE_PATH_1: white_flash_local(px, [PRE_PATH_1[0]], power=2.0) 
                 p = max(0.0, min(1.0, (t - pre_start_time) / PRE_TOTAL_S))
                 len1 = len(PRE_PATH_1)
                 len2 = len(PRE_PATH_2)
