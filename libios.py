@@ -8,8 +8,9 @@ from typing import List
 
 # Importamos toda la definición física y lógica
 from layout import * 
+from rf_control import RFManager 
 # ========= CONFIG =========
-VIDEO_FILE_DEFAULT = "/home/pi/libios.mp4"
+VIDEO_FILE_DEFAULT = "./bttf_libios.mkv"
 HOST       = "http://localhost:8090"
 TOKEN      = None
 PRIORITY   = 64
@@ -126,7 +127,7 @@ def police_sirens_fullrun(px, t, t0, duration=3.0):
     # FULL_PATH viene de layout.py
     sweep_path(px, FULL_PATH, colA, width=7, pos=phase, gain=1.8)
     sweep_path(px, list(reversed(FULL_PATH)), colB, width=7, pos=phase, gain=1.8)
-    pulse_zone(px, TOP_ZONE, BLUE_SIREN, RED_SIREN, phase=t*1.1, gain=0.15)
+    pulse_zone(px, ZONE2, BLUE_SIREN, RED_SIREN, phase=t*1.1, gain=0.15)
 
 # ========= SPEED FEEL =========
 SPEED_STROBE_BASE_HZ = 6.0
@@ -185,6 +186,7 @@ MORTAR_AIM        = 150.0
 ACCEL2_START      = s_f(160,4)
 JUMP_88MPH        = 176.0
 JUMP_FLASH_END    = 178.5
+JUMP_FLASH_LLAMA  = 179.5
 SHOW_END_APPROX   = s_f(181,0)
 
 AUTO_SHOTS = [
@@ -224,10 +226,12 @@ def start_mpv(video_path):
         try: os.remove(SOCK_PATH)
         except: pass
     cmd = [
+        "nice", "-n", "1",
         "mpv", video_path,
         "--fs","--no-osc","--keep-open=no",
         f"--input-ipc-server={SOCK_PATH}",
-        "--gpu-context=drm",
+        "--hwdec=v4l2m2m-copy",
+        "--vo=gpu",
         "--ao=alsa","--audio-samplerate=48000",
         "--volume=100","--mute=no",
     ]
@@ -282,6 +286,13 @@ def mpv_get_prop(prop: str, timeout=0.2):
 def run_show(video_path):
     global prev_px
     random.seed()
+
+    # --- INICIALIZACIÓN FASE ---
+    rf = RFManager()
+    
+    # Secuencia de handshake (Reset inicial) -> MOVIDO A IR_LAUNCHER
+    pass
+
     start_mpv(video_path)
     connect_ipc()
 
@@ -296,6 +307,18 @@ def run_show(video_path):
     TOP_PATH   = ZONE2 + INDEX["Z1_T"] # (ZONE2 es todo el nivel T_L+T_T+T_R) + Techo superior
     RIGHT_PATH = INDEX["B_R"] + INDEX["M_R"] + INDEX["T_R"] + INDEX["Z1_R"]
 
+    # --- DEFINICIÓN TIMELINE RF ---
+    rf_timeline = [
+        (DELOREAN_START, "front"),
+        (DELOREAN_START, "rear"),
+        (TIME_CIRCUITS_ON, "interior"),
+        (ACCEL2_START, "wheels"),
+        (JUMP_88MPH, "blue_front"),
+        (JUMP_88MPH, "blue_rear"),
+    ]
+    rf_timeline.sort(key=lambda x: x[0])
+    next_rf_idx = 0
+
     try:
         while True:
             if mpv_proc.poll() is not None:
@@ -304,6 +327,13 @@ def run_show(video_path):
             if t is None:
                 time.sleep(1.0/FPS)
                 continue
+
+            # --- LÓGICA RF ---
+            while next_rf_idx < len(rf_timeline) and t >= rf_timeline[next_rf_idx][0]:
+                ev_time, code_name = rf_timeline[next_rf_idx]
+                # print(f"RF Event: {code_name} at {t:.2f}")
+                rf.send(code_name)
+                next_rf_idx += 1
 
             px = idle_ambient(t or 0.0)
 
@@ -435,7 +465,21 @@ def run_show(video_path):
                         else:                add(px, i, scale(ELECTRIC_BLUE, 2.2))
                 if abs(t - JUMP_88MPH) < (1.0/FPS) and "jump_white" not in fired:
                     fired.add("jump_white")
+                    fired.add("jump_white")
                     one_frame_white_guarded()
+
+            # --- EFECTO FUEGO (Z_FIRE) ---
+            # Rastro de fuego tras el salto
+            if t >= JUMP_FLASH_LLAMA:
+                for i in ZONE_FIRE:
+                    flicker = random.random()
+                    # Variedad tonal: Rojo profundo, Naranja vivo, Amarillo chispas
+                    if flicker < 0.6:   color = scale(ORANGE_INTENSE, 0.4 + 0.6*random.random())
+                    elif flicker < 0.9: color = scale((255, 30, 0), 0.8) 
+                    else:               color = scale((255, 200, 50), 0.7)
+                    px[i] = color
+            else:
+                for i in ZONE_FIRE: px[i] = (0,0,0)
 
             send_frame(px)
             time.sleep(1.0/FPS)
@@ -450,6 +494,7 @@ def run_show(video_path):
         send_frame(frame_fill((0,0,0)), duration=600)
 
     finally:
+        if rf: rf.reset_sequence()
         cleanup()
 
 # ========= CLI =========

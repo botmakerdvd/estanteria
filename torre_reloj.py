@@ -11,7 +11,7 @@ from layout import * # Configuración de LEDs
 from rf_control import RFManager # Gestión de Radiofrecuencia (incluye el GAP de seguridad)
 
 # ========= CONFIG =========
-VIDEO_FILE_DEFAULT = "/home/pi/bttflargo.mp4"
+VIDEO_FILE_DEFAULT = "./bttf_torre.mkv"
 HOST       = "http://localhost:8090"
 TOKEN      = None
 PRIORITY   = 64
@@ -27,10 +27,14 @@ T_BLUE_SPARK_START  = 149.2
 T_ORANGE_SPARK_BASE = 155.59
 
 # Tiempos de RF (Definidos aquí para usarlos en el Timeline)
+T_ENCENDIDO_MOTOR = 2
+T_CIRCUITOS = 32
 T_FALLO_MOTOR  = 40.23
 T_PRUEBA_MOTOR = 49.27
+T_PRUEBA_MOTOR_END = 53
 T_ENCENDIDO    = 66.7
-T_RUEDAS       = 127.53
+T_RUEDAS       = 128.4
+T_RUEDAS_2     = 133
 
 # ========= PUNTOS CLAVE LEDs =========
 LED_CLOCK = [54, 55]   
@@ -47,7 +51,7 @@ PRE_PATH_1 = list(reversed(INDEX.get("Z1_T", [])))
 #    - T_L (hay que invertirlo para que baje)
 #    - M_L (ya está invertido en layout, de arriba a abajo, y contiene el reloj)
 PRE_PATH_2 = (list(reversed(INDEX.get("Z1_L", []))) + 
-              INDEX.get("T_L", []))
+              list(reversed(INDEX.get("T_L", []))))
 
 # 3. Viaje desde el reloj (LEDs 54,55) hasta el coche (LEDs 41,42)
 TRAVEL_PATH_TO_CAR = list(range(55, 40, -1))
@@ -219,10 +223,12 @@ def start_mpv(video_path):
         try: os.remove(SOCK_PATH)
         except: pass
     cmd = [
+        "nice", "-n", "1",
         "mpv", video_path,
         "--fs", "--no-osc", "--keep-open=no",
         f"--input-ipc-server={SOCK_PATH}",
-        "--gpu-context=drm",
+        "--hwdec=v4l2m2m-copy",
+        "--vo=gpu",
         "--ao=alsa", "--audio-samplerate=48000",
         "--volume=100", "--mute=no",
     ]
@@ -277,6 +283,16 @@ def mpv_get_prop(prop: str, timeout=0.2):
 # ========= LOOP =========
 def run_show_with_video(video_path, clock_offset, car_offset):
     random.seed()
+
+    # --- INICIALIZACIÓN FASE ---
+    # Enviamos secuencia de encendido ANTES del video
+    rf = RFManager()
+    
+    # 1. Apagar todo (Reset inicial) -> MOVIDO A IR_LAUNCHER
+    # 2. Encender todo -> MOVIDO A IR_LAUNCHER
+    # 3. Poner en standby -> MOVIDO A IR_LAUNCHER
+    pass
+
     start_mpv(video_path)
     connect_ipc()
 
@@ -288,27 +304,44 @@ def run_show_with_video(video_path, clock_offset, car_offset):
     T_BLUE_SPARK   = T_BLUE_SPARK_START
     T_ORANGE_SPARK = T_ORANGE_SPARK_BASE
 
+    # Generar ráfaga de intentos arranque (Flutter) - SIEMPRE PAR PARA ACABAR APAGADO
+    motor_flutter = []
+    t_f = T_PRUEBA_MOTOR
+    flutter_count = 0
+    while t_f < T_PRUEBA_MOTOR_END:
+        motor_flutter.append((t_f, "front")) 
+        t_f += 0.7 # Más lento (menos intentos)
+        flutter_count += 1
+    
+    # Si es impar, quitamos el último para que sea par (ON-OFF, ON-OFF...)
+    if flutter_count % 2 != 0:
+        motor_flutter.pop()
+
     # --- DEFINICIÓN DE LA COLA DE EVENTOS RF (TIMELINE) ---
     rf_timeline = [
         # Inicio
-        (2.0, "front"),
-     #   (2.0, "rear"), 
+        (T_ENCENDIDO_MOTOR, "front"),
+        (T_ENCENDIDO_MOTOR, "rear"), 
         
+        # Circuitos (NUEVO)
+        (T_CIRCUITOS, "interior"),
+
         # Fallo de motor
         (T_FALLO_MOTOR, "front"), 
-     #   (T_FALLO_MOTOR, "rear"), 
+        (T_FALLO_MOTOR, "rear"), 
+    ] + motor_flutter + [ # Insertamos secuencia generada
         
         # Encendido
         (T_ENCENDIDO, "front"),
-     #   (T_ENCENDIDO, "rear"),
+        (T_ENCENDIDO, "rear"),
         
         # Ruedas
         (T_RUEDAS,       "wheels"),
-        (T_RUEDAS + 1.5, "wheels"), 
+        (T_RUEDAS_2, "wheels"), 
         
         # Impacto
         (T_IMPACT, "blue_front"),
-     #   (T_IMPACT, "blue_rear")
+        (T_IMPACT, "blue_rear")
     ]
     
     rf_timeline.sort(key=lambda x: x[0])
@@ -398,8 +431,8 @@ def run_show_with_video(video_path, clock_offset, car_offset):
                 white_hold_until = t + 0.50
                 post_set_time    = white_hold_until
                 continue
-
-            # Post-efecto
+            
+            # Post-efecto (Se funde a azul/naranja)
             if post_set_time is not None and t >= post_set_time:
                 p = min(1.0, (t - post_set_time) / POST_FADE_S) 
                 white = WHITE
@@ -416,6 +449,21 @@ def run_show_with_video(video_path, clock_offset, car_offset):
                     for i in range(N):
                         r, g, b = px[i]
                         px[i] = (r * k, g * k, b * k)
+
+            # --- EFECTO FUEGO (Z_FIRE) -- APLICADO AL FINAL PARA NO SER SOBRE-ESCRITO
+            # Tras impacto: Rastro de fuego persistente
+            if t >= T_IMPACT:
+                for i in ZONE_FIRE:
+                    # Flicker de fuego
+                    flicker = random.random()
+                    # Variedad tonal: Rojo profundo, Naranja vivo, Amarillo chispas
+                    if flicker < 0.6:   color = scale(ORANGE_INTENSE, 0.4 + 0.6*random.random())
+                    elif flicker < 0.9: color = scale((255, 30, 0), 0.8) 
+                    else:               color = scale((255, 200, 50), 0.7)
+                    px[i] = color # Sobrescribe lo que haya puesto el post-efecto
+            # Antes impacto: Forzar apagado Z_FIRE
+            else:
+                for i in ZONE_FIRE: px[i] = (0,0,0)
 
             # Efectos decorativos finales (USAN T_BLUE_SPARK y T_ORANGE_SPARK)
             if not fired_blue and t >= T_BLUE_SPARK:
@@ -459,6 +507,6 @@ def main():
     p.add_argument("--car-offset", type=float, default=0.0, help="Ajuste (s) rayo al coche")
     args = p.parse_args()
     run_show_with_video(args.video, args.clock_offset, args.car_offset)
-
+        
 if __name__ == "__main__":
     main()
