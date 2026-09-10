@@ -22,12 +22,12 @@ except ImportError:
 CODES = {
     0x0c: "BTN_1",  # 1 -> Torre Reloj
     0x18: "BTN_2",  # 2 -> Libios
-    0x5e: "BTN_3",  # 3 -> Pendiente
-    0x08: "BTN_4",  # 4 -> Power Rangers 1
-    0x1c: "BTN_5",  # 5 -> Power Rangers 2
-    0x5a: "BTN_6",  # 6 -> Gabarra 24
-    0x42: "BTN_7",  # 7 -> Copa 24
-    0x52: "BTN_8",  # 8 -> Supercopa 15
+    0x5e: "BTN_3",  # 3 -> Power Rangers
+    0x08: "BTN_4",  # 4 -> Copa 24 (Audio 1)
+    0x1c: "BTN_5",  # 5 -> Copa 24 (Audio 2)
+    0x5a: "BTN_6",  # 6 -> Copa 24 (Audio 4)
+    0x42: "BTN_7",  # 7 -> Copa 24 (Audio 10)
+    0x52: "BTN_8",  # 8 -> Copa 24 (Audio 15)
     0x4a: "BTN_9",  # 9 -> Supercopa 22
     0x16: "BTN_0",  # 0 -> VUELTA A KODI
 }
@@ -35,7 +35,12 @@ CODES = {
 SHOWS = {
     "BTN_1": ["python3", "torre_reloj.py"],
     "BTN_2": ["python3", "libios.py"],
-    "BTN_4": ["python3", "power_rangers.py"],
+    "BTN_3": ["python3", "power_rangers.py"],
+    "BTN_4": ["python3", "copa_24.py", "audio=1"],
+    "BTN_5": ["python3", "copa_24.py", "audio=2"],
+    "BTN_6": ["python3", "copa_24.py", "audio=4"],
+    "BTN_7": ["python3", "copa_24.py", "audio=10"],
+    "BTN_8": ["python3", "copa_24.py", "audio=15"],
     "BTN_0": "KODI"
 }
 
@@ -85,8 +90,8 @@ def clean_hyperion():
     print("💡 Limpiando Hyperion (Prioridades 50 y 64)...")
     try:
         requests.post("http://localhost:8090/json-rpc",
-                      json={"command": "clear", "priority": 50}, timeout=0.2)
-        requests.post("http://localhost:8090/json-rpc",
+                      json={"command": "clear", "priority": 64}, timeout=0.2)
+        requests.post("http://localhost:8190/json-rpc",
                       json={"command": "clear", "priority": 64}, timeout=0.2)
     except:
         pass
@@ -123,13 +128,14 @@ def kill_active_show():
     subprocess.call(["pkill", "-f", "torre_reloj.py"])
     subprocess.call(["pkill", "-f", "libios.py"])
     subprocess.call(["pkill", "-f", "power_rangers.py"])
+    subprocess.call(["pkill", "-f", "copa_24.py"])
     subprocess.call(["pkill", "-f", "mpv"])
     subprocess.call(["pkill", "-f", "kodi"])
 
 def launch_slideshow():
     """Mata todo y lanza MPV SOLO CON FOTOS."""
     perform_rf_handshake()
-
+    clean_hyperion()
     print("🌅 Iniciando Slideshow (Solo Fotos + Ken Burns)...")
     kill_active_show()
 
