@@ -12,6 +12,15 @@ import sys
 import atexit
 import threading
 import requests
+import socket
+import math
+import random
+
+try:
+    from layout import INDEX, N
+except ImportError:
+    INDEX = {}
+    N = 153
 
 try:
     from rf_control import RFManager
@@ -46,17 +55,23 @@ SHOWS = {
 
 current_show_process = None
 rf_server_process = None
+power_morpher_process = None
 ui = None # Dispositivo Virtual
 last_press_time = 0
 DEBOUNCE_SECONDS = 1.0
 
 def cleanup_all():
     """Limpieza general al salir."""
-    global rf_server_process, ui
+    global rf_server_process, power_morpher_process, ui
     if rf_server_process:
         print("🛑 Deteniendo servidor RF...")
         try:
             rf_server_process.terminate()
+        except: pass
+    if power_morpher_process:
+        print("🛑 Deteniendo servidor Power Morpher UDP...")
+        try:
+            power_morpher_process.terminate()
         except: pass
     if ui:
         ui.close()
@@ -82,9 +97,19 @@ def monitor_loop():
 
 def start_rf_server():
     global rf_server_process
-    print("📡 Iniciando rf_server.py...")
-    rf_server_process = subprocess.Popen(["python3", "rf_server.py"])
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    rf_script = os.path.join(script_dir, "rf_server.py")
+    print(f"📡 Iniciando {rf_script}...")
+    rf_server_process = subprocess.Popen([sys.executable, rf_script])
     time.sleep(1.5)
+
+def start_power_morpher_server():
+    global power_morpher_process
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    pm_script = os.path.join(script_dir, "power_morpher.py")
+    print(f"⚡ Iniciando {pm_script} (Servidor UDP de Efectos)...")
+    power_morpher_process = subprocess.Popen([sys.executable, pm_script])
+    time.sleep(1.0)
 
 def clean_hyperion():
     print("💡 Limpiando Hyperion (Prioridades 50 y 64)...")
@@ -186,6 +211,7 @@ def main():
     except: pass
 
     start_rf_server()
+    start_power_morpher_server()
 
     monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
     monitor_thread.start()
