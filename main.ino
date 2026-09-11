@@ -827,7 +827,7 @@ void loop() {
             Serial.println("[EVENTO] -> Pulsado Abierto: ¡¡¡LLAMADA MEGAZORD!!!");
             enviarComandoUDP("MEGAZORD", d4, d5, d6);
             reproducirMegazord();
-            resetearZordsInvocados();
+            // Permanece en modo Megazord en siguientes pulsaciones abiertas hasta que se resetee con GO GO POWER RANGERS
             aplicarColorMoneda(d4, d5, d6);
           } else {
             Serial.println("[EVENTO] -> Pulsado Abierto: ¡LLAMADA ZORD!");

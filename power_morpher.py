@@ -88,6 +88,10 @@ ZORD_LEDS = {
 COL_LEFT  = (INDEX.get("B_L", []) + INDEX.get("M_L", []) + INDEX.get("T_L", []))
 COL_RIGHT = (INDEX.get("B_R", []) + INDEX.get("M_R", []) + INDEX.get("T_R", []))
 
+# Columnas laterales continuas de los 2 cajones superiores donde están los juguetes (Rangers Zona 2 + Zords Zona 1)
+TOYS_COL_LEFT  = INDEX.get("T_L", []) + INDEX.get("Z1_L", [])
+TOYS_COL_RIGHT = INDEX.get("T_R", []) + INDEX.get("Z1_R", [])
+
 # ========= ESTADO PERSISTENTE DE ILUMINACIÓN =========
 LIT_STATE = {}  # { led_index: (r, g, b) }
 current_effect_token = 0
@@ -145,7 +149,7 @@ def run_morph_intro_effect(token):
 # ========= FASE 2 APERTURA / EFECTO 1: METAMORFOSIS RANGER (MORPH) =========
 def run_morph_effect(ranger_name, token):
     global current_effect_token
-    print(f"⚡ [EFECTO RANGER] Metamorfosis para {ranger_name}...")
+    print(f"⚡ [EFECTO RANGER] Metamorfosis para {ranger_name}...", flush=True)
     color = COLOR_MAP.get(ranger_name, (255, 0, 0))
     r_target = RANGER_LEDS.get(ranger_name, [])
 
@@ -159,8 +163,9 @@ def run_morph_effect(ranger_name, token):
     dist_right = (len(Z2_STRIP) - 1) - mid_strip_pos if Z2_STRIP else 1
 
     fps = 30
-    duration = 2.8
+    duration = 1.6  # Reducido de 2.8s a 1.6s para un camino mucho más rápido y dinámico
     total_frames = int(duration * fps)
+    shout_played = False
 
     for frame in range(total_frames):
         if current_effect_token != token:
@@ -169,8 +174,9 @@ def run_morph_effect(ranger_name, token):
         t = frame / total_frames
         pixels = render_base_frame()
 
-        if t < 0.30:
-            prog = t / 0.30
+        if t < 0.25:
+            # FASE 1: Subida de energía supersónica por columnas (0 a 0.40s)
+            prog = t / 0.25
             head_l = int(prog * len(COL_LEFT)) if COL_LEFT else 0
             head_r = int(prog * len(COL_RIGHT)) if COL_RIGHT else 0
 
@@ -190,8 +196,9 @@ def run_morph_effect(ranger_name, token):
                     c = WHITE_SOFT if dist < 2 else color
                     if 0 <= idx < N: pixels[idx] = (int(c[0]*val), int(c[1]*val), int(c[2]*val))
 
-        elif t < 0.65:
-            prog = (t - 0.30) / 0.35
+        elif t < 0.55:
+            # FASE 2: Carrera rápida por la balda hacia el Ranger (0.40s a 0.88s)
+            prog = (t - 0.25) / 0.30
             pos_left = int(prog * dist_left)
             pos_right = (len(Z2_STRIP) - 1) - int(prog * dist_right)
 
@@ -214,8 +221,14 @@ def run_morph_effect(ranger_name, token):
                         if 0 <= idx < N: pixels[idx] = (int(c[0]*val), int(c[1]*val), int(c[2]*val))
 
         elif t < 0.85:
-            # FASE 3: Llegada e encendido directo en COLOR INTENSO PURO (sin destellos blancos lavadores)
-            prog = (t - 0.65) / 0.20
+            # FASE 3: ¡Impacto sobre el Ranger! (~0.88s) -> ¡Disparo inmediato del grito!
+            if not shout_played:
+                for i in r_target:
+                    LIT_STATE[i] = color
+                threading.Thread(target=play_ranger_shout, args=(ranger_name,), daemon=True).start()
+                shout_played = True
+
+            prog = (t - 0.55) / 0.30
             pulse = 0.85 + 0.15 * math.sin(prog * math.pi * 6)
             for i in r_target:
                 if 0 <= i < N:
@@ -233,7 +246,7 @@ def run_morph_effect(ranger_name, token):
         for i in r_target:
             LIT_STATE[i] = color
         update_persistent_frame()
-        print(f"✨ [PERSISTENCIA] Ranger {ranger_name} activado y encendido permanentemente.")
+        print(f"✨ [PERSISTENCIA] Ranger {ranger_name} activado y encendido permanentemente.", flush=True)
 
 # ========= REPRODUCCIÓN DE AUDIO LOCAL (RUGIDOS Y MEGAZORD) =========
 current_audio_process = None
@@ -278,6 +291,27 @@ def play_sound_file(file_path):
     except Exception as e:
         print(f"⚠️ [AUDIO ERROR] Fallo al reproducir audio: {e}", flush=True)
 
+def find_ranger_shout(ranger_name):
+    """Localiza el archivo de grito post-metamorfosis (_g.wav) para el Ranger."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    name_lower = ranger_name.lower().strip()
+    candidates = [
+        os.path.join(base_dir, "audios_power_rangers", f"{name_lower}_g.wav"),
+        os.path.join(base_dir, "audios_power_rangers", f"{name_lower}_grito.wav"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+def play_ranger_shout(ranger_name):
+    """Reproduce el grito de batalla del Ranger tras morfearse."""
+    shout_file = find_ranger_shout(ranger_name)
+    if shout_file:
+        play_sound_file(shout_file)
+    else:
+        print(f"⚠️ [AUDIO] No se encontró archivo de grito para Ranger {ranger_name}", flush=True)
+
 def find_zord_sound(ranger_name):
     """Localiza el archivo de audio para el Zord (rojo, azul, amarillo, rosa, negro, blanco, megazord)."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -312,6 +346,10 @@ def run_zord_effect(ranger_name, token):
     z_target = ZORD_LEDS.get(ranger_name, [])
     r_target = RANGER_LEDS.get(ranger_name, [])
 
+    # Asegurar que el Ranger del Zord SIEMPRE quede registrado en LIT_STATE desde el inicio
+    for i in r_target:
+        LIT_STATE[i] = color
+
     if z_target and Z1_STRIP:
         target_indices = [Z1_STRIP.index(i) for i in z_target if i in Z1_STRIP]
         mid_target_pos = sum(target_indices) / len(target_indices) if target_indices else len(Z1_STRIP) / 2
@@ -329,6 +367,11 @@ def run_zord_effect(ranger_name, token):
 
         t = frame / total_frames
         pixels = render_base_frame()
+
+        # El Ranger NUNCA se apaga durante la llamada al Zord: encendido continuo
+        for i in r_target:
+            if 0 <= i < N:
+                pixels[i] = color
 
         if t < 0.35:
             # FASE 1: Subida de energía por columnas laterales
@@ -432,13 +475,7 @@ def run_megazord_effect(token):
         (160, 0, 255),    # Negro / Púrpura
     ]
 
-    all_5_zord_leds = []
-    for r in ["RED", "BLUE", "YELLOW", "PINK", "BLACK"]:
-        all_5_zord_leds.extend(ZORD_LEDS.get(r, []))
-
-    all_5_ranger_leds = []
-    for r in ["RED", "BLUE", "YELLOW", "PINK", "BLACK"]:
-        all_5_ranger_leds.extend(RANGER_LEDS.get(r, []))
+    WHITE_FLASH = (255, 255, 255)
 
     fps = 30
     duration = 54.0  # Duración alineada con megazord_r.wav (~54s)
@@ -450,83 +487,150 @@ def run_megazord_effect(token):
             return
 
         t_sec = frame / fps
-        pixels = render_base_frame()
+        pixels = [(0, 0, 0)] * N
 
-        if t_sec < 4.5:
-            # FASE 1: (0s - 4.5s) Invocación convergente - Los 5 Zords pulsan juntos con energía
-            strobe = (int(t_sec * 6) % 2 == 0)
+        if t_sec < 6.5:
+            # =========================================================================
+            # FASE 1: (0s - 6.5s) ¡COLUMNAS DORADAS SUBIENDO POR LOS 2 CAJONES DE ARRIBA!
+            # Rayos dorados de alta potencia suben continuamente y en sincronía por las
+            # columnas de los 2 cajones superiores (Zona 2 Rangers + Zona 1 Zords, donde
+            # están todos los juguetes).
+            # Ambos cajones (Rangers y Zords) vibran con energía pura y chispas blancas.
+            # =========================================================================
+            # 1. Columnas doradas continuas subiendo por los 2 cajones superiores a la vez
+            head_float = t_sec * 2.5 * 9.0  # Onda continua a través de los 2 cajones (9 leds por cajón)
+            GOLD_LIGHT = (255, 210, 20)
+
+            for k in range(len(TOYS_COL_LEFT)):
+                dist = (head_float - k) % 9.0
+                idx_l = TOYS_COL_LEFT[k]
+                idx_r = TOYS_COL_RIGHT[k]
+                if dist < 5.0:
+                    val = 1.0 - (dist / 5.0)
+                    c_spark = WHITE_FLASH if dist < 1.3 else (int(GOLD_LIGHT[0] * val), int(GOLD_LIGHT[1] * val), int(GOLD_LIGHT[2] * val))
+                    if 0 <= idx_l < N: pixels[idx_l] = c_spark
+                    if 0 <= idx_r < N: pixels[idx_r] = c_spark
+                else:
+                    # Resplandor dorado cálido de base en las columnas de ambos cajones
+                    if 0 <= idx_l < N: pixels[idx_l] = (40, 30, 0)
+                    if 0 <= idx_r < N: pixels[idx_r] = (40, 30, 0)
+
+            # 2. Los 5 Zords en la balda superior (Cajón 1) vibran con potencia y chispas blancas
             for r in ["RED", "BLUE", "YELLOW", "PINK", "BLACK"]:
-                c = COLOR_MAP[r] if strobe else WHITE_SOFT
+                base_c = COLOR_MAP[r]
                 for idx in ZORD_LEDS.get(r, []):
-                    if 0 <= idx < N: pixels[idx] = c
+                    if 0 <= idx < N:
+                        pixels[idx] = WHITE_FLASH if random.random() < 0.35 else base_c
 
-        elif t_sec < 14.0:
-            # FASE 2: (4.5s - 14s) Rayos de energía bajan por las columnas uniendo Zords y Rangers
-            prog = (t_sec - 4.5) / 9.5
-            head = int((prog * 6) % 1.0 * len(COL_LEFT))
-            for k in range(len(COL_LEFT)):
-                dist = abs(head - k)
-                if dist < 4:
-                    val = 1.0 - (dist / 4.0)
-                    idx_l = COL_LEFT[k]
-                    idx_r = COL_RIGHT[k]
-                    if 0 <= idx_l < N: pixels[idx_l] = (int(255 * val), int(220 * val), int(100 * val))
-                    if 0 <= idx_r < N: pixels[idx_r] = (int(255 * val), int(220 * val), int(100 * val))
+            # 3. Los 5 Rangers en la balda de abajo (Cajón 2) también brillan radiantes
+            for r in ["RED", "BLUE", "YELLOW", "PINK", "BLACK"]:
+                base_c = COLOR_MAP[r]
+                for idx in RANGER_LEDS.get(r, []):
+                    if 0 <= idx < N:
+                        pixels[idx] = WHITE_FLASH if random.random() < 0.20 else base_c
 
-            # Zords y Rangers encendidos en sus colores
+            # 4. Zona especial / fuego parpadeando con destellos dorados y rojos
+            for idx in special_leds:
+                if 0 <= idx < N:
+                    pixels[idx] = (255, 200, 0) if (frame % 4 < 2) else (255, 40, 0)
+
+        elif t_sec < 15.0:
+            # =========================================================================
+            # FASE 2: (6.5s - 15s) ¡TRANSFERENCIA DE PLASMA & CONEXIÓN TOTAL!
+            # Cometas de energía bajan a toda velocidad por las columnas de los 2 cajones superiores.
+            # Zords y Rangers brillan al 100% de color mientras la energía viaja.
+            # =========================================================================
+            head_down = (t_sec - 6.5) * 2.5 * 9.0
+            for k in range(len(TOYS_COL_LEFT)):
+                dist = (k - head_down) % 9.0
+                if dist < 5.0:
+                    val = 1.0 - (dist / 5.0)
+                    c_comet = (int(255 * val), int(220 * val), int(140 * val))
+                    if 0 <= TOYS_COL_LEFT[k] < N: pixels[TOYS_COL_LEFT[k]] = c_comet
+                    if 0 <= TOYS_COL_RIGHT[k] < N: pixels[TOYS_COL_RIGHT[k]] = c_comet
+                else:
+                    if 0 <= TOYS_COL_LEFT[k] < N: pixels[TOYS_COL_LEFT[k]] = (30, 20, 0)
+                    if 0 <= TOYS_COL_RIGHT[k] < N: pixels[TOYS_COL_RIGHT[k]] = (30, 20, 0)
+
+            # Zords y Rangers fijados a plena intensidad con chisporroteo eléctrico
             for r in ["RED", "BLUE", "YELLOW", "PINK", "BLACK"]:
                 c = COLOR_MAP[r]
-                for idx in ZORD_LEDS.get(r, []) + RANGER_LEDS.get(r, []):
-                    if 0 <= idx < N: pixels[idx] = c
+                for idx in ZORD_LEDS.get(r, []):
+                    if 0 <= idx < N:
+                        pixels[idx] = WHITE_FLASH if random.random() < 0.15 else c
+                for idx in RANGER_LEDS.get(r, []):
+                    if 0 <= idx < N:
+                        pixels[idx] = WHITE_FLASH if random.random() < 0.15 else c
+
+            # Pulsos en los cubos inferiores
+            pulse_mid = 0.5 + 0.5 * math.sin((t_sec - 6.5) * math.pi * 3)
+            for led_i in rectangles[0] + rectangles[1]:
+                if 0 <= led_i < N:
+                    pixels[led_i] = (int(40 * pulse_mid), int(20 * pulse_mid), int(80 * pulse_mid))
 
         elif t_sec < 32.0:
-            # FASE 3: (14s - 32s) ¡Gran Ensamblaje Megazord! Secuencia dinámica en los 4 cubos
-            cycle_step = int((t_sec - 14.0) * 2.5)
-            color_offset = cycle_step % len(RANGERS_5_COLORS)
-            active_colors = [
-                RANGERS_5_COLORS[(color_offset + 0) % len(RANGERS_5_COLORS)],
-                RANGERS_5_COLORS[(color_offset + 1) % len(RANGERS_5_COLORS)],
-                RANGERS_5_COLORS[(color_offset + 2) % len(RANGERS_5_COLORS)],
-                RANGERS_5_COLORS[(color_offset + 3) % len(RANGERS_5_COLORS)],
-            ]
+            # =========================================================================
+            # FASE 3: (15s - 32s) ¡GRAN ENSAMBLAJE MEGAZORD (TRANSFORMACIÓN)!
+            # Los 4 cajones alternan secuencias cromáticas rápidas de los 5 colores Rangers
+            # con chisporroteo blanco de alta energía.
+            # =========================================================================
+            cycle_step = int((t_sec - 15.0) * 2.5)
             for rect_idx, rect_leds in enumerate(rectangles):
-                col = active_colors[rect_idx]
+                base_col = RANGERS_5_COLORS[(cycle_step + rect_idx) % len(RANGERS_5_COLORS)]
                 for led_i in rect_leds:
-                    if 0 <= led_i < N: pixels[led_i] = col
+                    if 0 <= led_i < N:
+                        r_rnd = random.random()
+                        if r_rnd < 0.15:
+                            pixels[led_i] = WHITE_FLASH
+                        elif r_rnd < 0.35:
+                            pixels[led_i] = (min(255, int(base_col[0] * 0.5 + 128)),
+                                             min(255, int(base_col[1] * 0.5 + 128)),
+                                             min(255, int(base_col[2] * 0.5 + 128)))
+                        else:
+                            pixels[led_i] = base_col
 
-            # Mantener los 5 Zords brillando con potencia
+            # Los 5 Zords en la balda superior permanecen como faros de potencia pura
             for r in ["RED", "BLUE", "YELLOW", "PINK", "BLACK"]:
                 for idx in ZORD_LEDS.get(r, []):
                     if 0 <= idx < N: pixels[idx] = COLOR_MAP[r]
 
         elif t_sec < 48.0:
-            # FASE 4: (32s - 48s) ¡Espada de Poder & Batalla Megazord!
+            # =========================================================================
+            # FASE 4: (32s - 48s) ¡ESPADA DE PODER Y COMBATE DEFINITIVO!
+            # Destellos dorados y fuego en special_leds, tajos de luz en columnas laterales.
+            # =========================================================================
             strobe_gold = (int(t_sec * 8) % 2 == 0)
-            gold_color = (255, 200, 20) if strobe_gold else (255, 50, 0)
+            gold_color = (255, 210, 20) if strobe_gold else (255, 50, 0)
             for led_i in special_leds:
                 if 0 <= led_i < N: pixels[led_i] = gold_color
 
-            # Barrido de poder en columnas laterales
-            col_sweep = int((t_sec * 10) % len(COL_LEFT))
+            # Tajo de espada que barre las columnas a gran velocidad
+            sword_sweep = int((t_sec * 12) % len(COL_LEFT)) if COL_LEFT else 0
             for k in range(len(COL_LEFT)):
-                if abs(k - col_sweep) < 3:
-                    if 0 <= COL_LEFT[k] < N: pixels[COL_LEFT[k]] = WHITE_SOFT
-                    if 0 <= COL_RIGHT[k] < N: pixels[COL_RIGHT[k]] = WHITE_SOFT
+                if abs(k - sword_sweep) < 4:
+                    if 0 <= COL_LEFT[k] < N: pixels[COL_LEFT[k]] = WHITE_FLASH
+                    if 0 <= COL_RIGHT[k] < N: pixels[COL_RIGHT[k]] = WHITE_FLASH
+                else:
+                    if 0 <= COL_LEFT[k] < N: pixels[COL_LEFT[k]] = (60, 0, 0)
+                    if 0 <= COL_RIGHT[k] < N: pixels[COL_RIGHT[k]] = (60, 0, 0)
 
-            # Todos los 5 Zords y Rangers en colores vivos
+            # Los 5 Zords y Rangers encendidos en sus colores vivos
             for r in ["RED", "BLUE", "YELLOW", "PINK", "BLACK"]:
                 c = COLOR_MAP[r]
                 for idx in ZORD_LEDS.get(r, []) + RANGER_LEDS.get(r, []):
                     if 0 <= idx < N: pixels[idx] = c
 
         else:
-            # FASE 5: (48s - 54s) Consolidación triunfal
+            # =========================================================================
+            # FASE 5: (48s - 54s) ¡VICTORIA TRIUNFAL Y CONSOLIDACIÓN!
+            # Asentamiento glorioso en colores permanentes para la estantería.
+            # =========================================================================
             for r in ["RED", "BLUE", "YELLOW", "PINK", "BLACK"]:
                 c = COLOR_MAP[r]
                 for idx in ZORD_LEDS.get(r, []) + RANGER_LEDS.get(r, []):
                     if 0 <= idx < N: pixels[idx] = c
             for idx in COL_LEFT + COL_RIGHT:
-                if 0 <= idx < N: pixels[idx] = (40, 0, 0)
+                if 0 <= idx < N: pixels[idx] = (30, 10, 0)
 
         send_frame(pixels)
         time.sleep(1.0 / fps)
